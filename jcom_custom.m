@@ -62,12 +62,19 @@ function RC = jcom_custom(fname, caliQ)
     tablasHUFFVAL = {HUFFVAL_Y_DC, HUFFVAL_Y_AC, ...
                      HUFFVAL_C_DC, HUFFVAL_C_AC};
 
-    % Comprobar la coherencia de las especificaciones.
+    % Comprobar y completar las especificaciones.
     for k = 1:4
-        assert(numel(tablasBITS{k}) == 16, ...
-            'BITS debe contener 16 elementos.');
+        b = tablasBITS{k};
+        b = b(:);  % Asegurar formato columna.
 
-        assert(sum(tablasBITS{k}) == numel(tablasHUFFVAL{k}), ...
+        assert(numel(b) <= 16, ...
+            'BITS no puede superar 16 elementos.');
+
+        % Completar con ceros hasta tener 16 posiciones.
+        b(end+1:16, 1) = 0;
+        tablasBITS{k} = b;
+
+        assert(sum(b) == numel(tablasHUFFVAL{k}), ...
             'BITS y HUFFVAL no son coherentes.');
     end
 

@@ -511,3 +511,76 @@ la cabecera y las tablas supera el ahorro de los datos,
 especialmente en imágenes pequeñas.
 
 Finalmente, jcom_custom devuelve RC como resultado.
+
+## Paso 15. Primera prueba del compresor
+
+Guardo jcom_custom.m y EncodeScans_custom.m y ejecuto
+el compresor con una imagen de la librería y caliQ = 100.
+
+Este factor utiliza las tablas de cuantización estándar.
+La función debe terminar sin errores, generar comprimido.huc
+y devolver el porcentaje de ahorro RC.
+
+### Comprobaciones
+
+Compruebo que existe comprimido.huc y consulto mediante dir
+los tamaños reales del archivo original y del comprimido.
+
+Después calculo de forma independiente:
+
+    RCcomprobada = 100 * (TO - TC) / TO;
+
+Comparo este resultado con el valor devuelto por jcom_custom.
+Ambos deben coincidir, admitiendo una pequeña tolerancia
+por trabajar con números de coma flotante.
+
+### Resultados de la prueba
+
+- Imagen utilizada: pendiente.
+- Factor caliQ: 100.
+- Tamaño original: pendiente.
+- Tamaño del archivo .huc: pendiente.
+- RC obtenida: pendiente.
+- Errores observados: pendiente.
+
+### Alcance de esta comprobación
+
+Esta prueba confirma que el compresor termina, crea el archivo
+y calcula RC de acuerdo con los tamaños reales.
+
+Todavía no demuestra que los datos puedan descomprimirse
+correctamente. Esa comprobación se realizará al implementar
+jdes_custom y verificar la reconstrucción.
+
+## Corrección detectada en la primera prueba
+
+La ejecución se detuvo porque se esperaba que cada vector
+BITS tuviera exactamente 16 elementos.
+
+Al revisar AdjustBits, compruebo que devuelve únicamente
+las posiciones hasta la mayor longitud utilizada. Por tanto,
+un vector BITS con menos de 16 elementos es válido.
+
+Antes de escribir las tablas, completo cada BITS con ceros
+hasta obtener 16 posiciones. Los ceros añadidos indican
+que no existen códigos de esas longitudes.
+
+Esta adaptación no modifica los códigos ni HUFFVAL.
+Permite mantener el formato del archivo, que reserva
+16 valores uint16 para cada vector BITS.
+
+## Resultado de la primera prueba
+
+Ejecuto jcom_custom con Img00.bmp y caliQ = 100.
+
+La imagen tiene 480 píxeles de ancho y 640 de alto.
+No necesita ampliación, porque ambas dimensiones son
+múltiplos de ocho.
+
+La función termina sin errores y devuelve un ahorro
+del 97,80 %. Por tanto, el archivo .huc ocupa aproximadamente
+el 2,20 % del tamaño del BMP original.
+
+Se superan las comprobaciones de escritura y tamaño.
+Queda pendiente verificar la reconstrucción de la imagen
+cuando se implemente jdes_custom.
