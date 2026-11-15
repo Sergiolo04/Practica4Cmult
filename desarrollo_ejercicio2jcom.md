@@ -584,3 +584,545 @@ el 2,20 % del tamaño del BMP original.
 Se superan las comprobaciones de escritura y tamaño.
 Queda pendiente verificar la reconstrucción de la imagen
 cuando se implemente jdes_custom.
+
+# Descompresión con tablas Huffman a medida
+
+## Paso 1. Preparar jdes_custom
+
+Creo el archivo jdes_custom.m. La función recibe fname,
+que identifica el archivo comprimido .huc, y devolverá
+dos resultados:
+
+- MSE: error cuadrático medio entre la imagen original
+  y la reconstruida.
+- RC: porcentaje de espacio ahorrado con la compresión.
+
+Primero compruebo mediante isfile que el archivo existe.
+Si no existe, detengo la ejecución con un mensaje de error.
+
+Después consulto su información mediante dir y guardo
+su tamaño en bytes en la variable TC. Este tamaño incluye
+la cabecera, las especificaciones Huffman y los datos
+comprimidos.
+
+Por último, establezco comprimido_des_cus.bmp como nombre
+de la imagen reconstruida. Esta asignación solo prepara
+el nombre: todavía no crea ningún archivo.
+
+En este paso aún no leo el contenido del .huc ni calculo
+MSE y RC.
+
+## Paso 2. Obtener la imagen original para evaluar el resultado
+
+Solicito el nombre de la imagen original mediante input.
+Utilizo la opción 's' para recibir lo escrito como texto.
+
+La imagen original no es necesaria para decodificar el .huc.
+La necesito para calcular el MSE y mostrarla junto a la imagen
+reconstruida, como pide el ejercicio.
+
+El archivo comprimido no guarda el nombre del original,
+por lo que lo solicito durante la ejecución.
+
+Primero compruebo que la imagen indicada existe. Después
+utilizo imlee para obtener:
+
+- X: imagen original representada en RGB.
+- mOriginal: altura original.
+- nOriginal: anchura original.
+
+Descarto las demás salidas mediante el símbolo ~, porque
+en esta etapa no necesito la imagen ampliada ni sus metadatos.
+
+Compruebo que X tenga tres canales y sea de tipo uint8,
+es decir, una representación RGB de 8 bits por canal.
+
+Conservo X para calcular posteriormente el MSE. También
+guardo sus dimensiones para compararlas con las que leeré
+de la cabecera del .huc.
+
+Debo seleccionar la misma imagen que utilicé al comprimir.
+Que las dimensiones coincidan no garantiza por sí solo
+que sea el archivo correcto.
+
+## Paso 3. Abrir el archivo y leer la cabecera
+
+Abro el archivo .huc con fopen en modo 'rb', que permite
+leer datos binarios. Utilizo little-endian porque es el
+mismo orden de bytes empleado por jcom_custom al escribir.
+
+Si fopen devuelve -1, detengo la ejecución porque no se
+ha podido abrir el archivo.
+
+Creo un objeto onCleanup para cerrar automáticamente el
+archivo cuando termine la función, incluso si ocurre un error.
+
+### Leer los datos generales
+
+Utilizo fread para leer cuatro valores uint32. Cada uno
+ocupa cuatro bytes, por lo que la cabecera ocupa 16 bytes.
+
+Los interpreto en el mismo orden usado al comprimir:
+
+1. m: altura original de la imagen.
+2. n: anchura original de la imagen.
+3. caliQ: factor utilizado en la cuantización.
+4. TO: tamaño en bytes del archivo original.
+
+Compruebo que se hayan leído los cuatro valores y que
+ninguno sea cero. Después los convierto a double para
+realizar los cálculos posteriores.
+
+### Recuperar las dimensiones ampliadas
+
+El compresor amplió las dimensiones a múltiplos de ocho.
+Como esos tamaños no se guardaron, los calculo mediante:
+
+    mamp = 8 * ceil(m / 8);
+    namp = 8 * ceil(n / 8);
+
+ceil redondea hacia arriba. Por ejemplo, una dimensión
+original de 13 se convierte en 16; una de 16 se mantiene.
+
+También compruebo que las dimensiones de la imagen original
+seleccionada coincidan con m y n.
+
+Al terminar este paso, el archivo sigue abierto y su posición
+de lectura está justo después de la cabecera, donde comienzan
+las cuatro especificaciones Huffman.
+
+
+
+## Paso 4. Leer las especificaciones Huffman
+
+Después de la cabecera, el archivo contiene cuatro pares
+BITS/HUFFVAL en este orden:
+
+1. Y_DC: tabla DC de luminancia.
+2. Y_AC: tabla AC de luminancia.
+3. C_DC: tabla DC compartida por Cb y Cr.
+4. C_AC: tabla AC compartida por Cb y Cr.
+
+Debo respetar este orden porque el archivo no guarda
+identificadores individuales para las tablas.
+
+### Lectura de cada tabla
+
+Primero leo los 16 valores de BITS como uint16.
+Cada valor ocupa dos bytes, por lo que cada BITS ocupa
+32 bytes en el archivo.
+
+BITS indica cuántos códigos existen de cada longitud.
+Por tanto, su suma determina cuántos símbolos contiene
+el HUFFVAL que aparece inmediatamente después.
+
+A continuación, leo esa cantidad de valores como uint8,
+porque cada símbolo de HUFFVAL está entre 0 y 255
+y ocupa un byte.
+
+No necesito leer una longitud adicional para HUFFVAL:
+la obtengo directamente de BITS.
+
+### Comprobaciones
+
+Compruebo que cada lectura devuelva todos los elementos
+esperados. También verifico que la cantidad de símbolos
+esté entre 1 y 256 y que HUFFVAL no contenga duplicados.
+
+Convierto los vectores leídos a double para utilizarlos
+posteriormente con las funciones de construcción de tablas.
+
+### Resultado de esta etapa
+
+Recupero los cuatro pares BITS/HUFFVAL que utilizó
+el compresor. No vuelvo a calcular frecuencias: necesito
+reconstruir exactamente los mismos códigos Huffman.
+
+Todavía no he decodificado ninguna componente.
+El archivo sigue abierto y la posición de lectura queda
+al comienzo de los datos de la componente Y.
+
+
+## Paso 5. Leer los datos comprimidos de Y, Cb y Cr
+
+Después de las especificaciones Huffman, leo las componentes
+en el mismo orden utilizado al comprimir: Y, Cb y Cr.
+
+Para cada componente, el archivo contiene tres campos:
+
+1. La cantidad de bytes empaquetados, almacenada como uint32.
+2. El indicador ultl, almacenado como uint8.
+3. Los bytes comprimidos, almacenados como uint8.
+
+### Lectura de cada componente
+
+Primero leo su longitud. Este valor indica exactamente
+cuántos bytes de datos debo leer después del indicador ultl.
+
+A continuación leo ultl, cuyo significado es:
+
+- 0: todos los bytes están completos, sin relleno.
+- Entre 1 y 7: cantidad de bits válidos del último byte.
+
+Finalmente, leo los bytes empaquetados y compruebo que
+se hayan recuperado todos los que indica la longitud.
+
+Repito el proceso para las tres componentes mediante
+un bucle, ya que comparten la misma estructura.
+
+### Comprobaciones de lectura
+
+Compruebo que las longitudes y los indicadores se hayan
+podido leer y que ultl esté entre 0 y 7.
+
+También verifico que cada longitud sea positiva y que
+no supere la cantidad de bytes que quedan en el archivo.
+Para conocer la posición actual utilizo ftell.
+
+Después de leer las tres componentes, la posición debe
+coincidir con el tamaño total TC. Si quedan bytes adicionales,
+el archivo no coincide con el formato definido.
+
+### Resultado de esta etapa
+
+Obtengo bytesY, bytesCb y bytesCr, junto con sus respectivas
+longitudes e indicadores ultl.
+
+Ya he leído todo el contenido necesario del .huc, por lo que
+cierro el archivo eliminando el objeto onCleanup creado
+al abrirlo.
+
+Todavía no he aplicado la decodificación Huffman: los datos
+siguen empaquetados en bytes. El siguiente paso será recuperar
+las secuencias de caracteres '0' y '1' sin los bits de relleno.
+
+## Paso 6. Recuperar las secuencias binarias
+
+Utilizo bytes2bits para desempaquetar los datos de cada
+componente. La función recibe el vector de bytes y su
+indicador ultl.
+
+Cada byte se convierte en ocho caracteres binarios,
+conservando los ceros iniciales. Por ejemplo, un byte
+de valor 5 se representa como '00000101'.
+
+### Eliminar los bits de relleno
+
+El indicador ultl permite recuperar la longitud exacta
+de la secuencia anterior al empaquetado:
+
+- Si ultl vale 0, todos los bytes están completos.
+- Si ultl está entre 1 y 7, solo esa cantidad de bits
+  del último byte pertenece a la secuencia original.
+  Los restantes son ceros de relleno y se descartan.
+
+Por ejemplo, si el último byte representa '10100000'
+y ultl vale 3, solo se recuperan los bits '101'.
+
+No se deben eliminar ceros simplemente por estar al final:
+pueden formar parte de los datos. El indicador ultl es
+el que permite distinguir los datos del relleno.
+
+### Resultado de esta etapa
+
+Obtengo CodedY, CodedCb y CodedCr como secuencias de
+caracteres '0' y '1', sin el relleno del empaquetado.
+
+Esta operación deshace bits2bytes y no introduce pérdida.
+Todavía no he recuperado las etiquetas cuantizadas:
+el siguiente paso será decodificar estas secuencias
+utilizando las tablas Huffman guardadas en el archivo.
+
+## Paso 7. Reconstruir las tablas de decodificación Huffman
+
+Creo la función DecodeScans_custom. Recibirá las tres
+secuencias binarias, las dimensiones ampliadas y los cuatro
+pares BITS/HUFFVAL leídos del archivo.
+
+No utilizo las tablas Huffman por defecto ni calculo nuevas
+frecuencias. Debo reconstruir exactamente los códigos que
+utilizó el compresor.
+
+### Reconstruir los códigos
+
+Para cada par BITS/HUFFVAL utilizo HCodeTables.
+
+Como los códigos son canónicos, las longitudes indicadas
+por BITS y el orden de los símbolos en HUFFVAL permiten
+generar los mismos códigos utilizados durante la compresión.
+
+Conservo HUFFCODE y descarto HUFFSIZE mediante ~, porque
+la siguiente función no necesita ese vector.
+
+### Preparar la búsqueda de símbolos
+
+Utilizo HDecodingTables con BITS y HUFFCODE para obtener:
+
+- MINCODE: menor código de cada longitud que tenga códigos.
+- MAXCODE: mayor código de cada longitud; vale -1 cuando
+  no existen códigos de esa longitud.
+- VALPTR: índice del primer símbolo de HUFFVAL correspondiente
+  a cada longitud que tenga códigos.
+
+Estas tablas permiten determinar dónde termina un código
+y localizar el símbolo que representa dentro de HUFFVAL.
+
+### Resultado de esta etapa
+
+Preparo cuatro conjuntos de tablas de decodificación:
+Y_DC, Y_AC, C_DC y C_AC.
+
+Las tablas de crominancia se utilizarán tanto para Cb como
+para Cr. Todavía no decodifico las secuencias binarias:
+solo preparo las tablas que necesitará DecodeSingleScan.
+
+## Paso 8. Decodificar las tres componentes
+
+Utilizo DecodeSingleScan para interpretar las secuencias
+binarias con las tablas Huffman reconstruidas.
+
+Realizo tres llamadas independientes:
+
+- Para Y utilizo las tablas Y_DC y Y_AC.
+- Para Cb utilizo las tablas C_DC y C_AC.
+- Para Cr utilizo también las tablas C_DC y C_AC.
+
+Cb y Cr comparten tablas, pero cada una se decodifica
+a partir de su propia secuencia binaria.
+
+### Recuperar las etiquetas de cada bloque
+
+El decodificador reconoce los códigos Huffman y recupera
+los símbolos que representan.
+
+Para los DC, obtiene la categoría y lee la información
+de posición para recuperar la diferencia DC. Después
+reconstruye el DC sumando esa diferencia al DC anterior.
+La referencia inicial de cada componente es cero.
+
+Para los AC, recupera los símbolos que indican cuántos
+ceros preceden a cada valor y cuál es su categoría.
+Con los bits de posición recupera el valor concreto.
+
+También interpreta los símbolos especiales de rachas
+de 16 ceros y final de bloque.
+
+### Reunir las componentes
+
+Cada llamada devuelve una matriz de tamaño mamp por namp.
+Utilizo cat(3, ...) para reunirlas en el orden Y, Cb y Cr.
+
+El resultado XScanrec tiene tamaño mamp por namp por 3
+y contiene las etiquetas cuantizadas, todavía organizadas
+en zigzag dentro de cada bloque.
+
+Estas etiquetas deben coincidir exactamente con las que
+se entregaron al codificador: Huffman no introduce pérdida.
+La pérdida de precisión procede de la cuantización anterior.
+
+Finalmente, añado la llamada a DecodeScans_custom en
+jdes_custom, después de recuperar las secuencias binarias.
+
+## Paso 9. Deshacer el orden zigzag
+
+Después de decodificar Huffman, XScanrec contiene las etiquetas
+cuantizadas de las componentes Y, Cb y Cr. Dentro de cada
+bloque de 8×8, estas etiquetas siguen ordenadas en zigzag.
+
+Durante la compresión se utilizó scan para facilitar
+la representación de las rachas de ceros. Ahora utilizo
+invscan para deshacer esa reorganización:
+
+    Xlabrec = invscan(XScanrec);
+
+Cada etiqueta vuelve a la posición que le corresponde
+en la matriz de coeficientes del bloque. El DC queda
+en la esquina superior izquierda y los AC recuperan
+sus posiciones según sus frecuencias horizontales y verticales.
+
+El resultado Xlabrec conserva el tamaño mamp por namp por 3
+y el orden de las componentes: Y, Cb y Cr.
+
+Esta operación no cambia los valores ni introduce pérdida.
+Todavía tengo etiquetas cuantizadas, no coeficientes DCT
+descuantizados ni valores de píxeles.
+
+## Paso 10. Descuantizar las etiquetas
+
+Xlabrec contiene las etiquetas cuantizadas, colocadas
+en sus posiciones correspondientes dentro de cada bloque.
+
+Utilizo desquantmat con Xlabrec y el factor caliQ leído
+de la cabecera del archivo:
+
+    Xtransrec = desquantmat(Xlabrec, caliQ);
+
+La función reconstruye las tablas de cuantización utilizadas
+al comprimir: QY para luminancia y QC para ambas crominancias,
+ajustadas con el mismo caliQ.
+
+Después multiplica cada etiqueta por su escalón de
+cuantización para obtener un coeficiente DCT reconstruido.
+
+Esta operación no recupera exactamente los coeficientes
+anteriores a la cuantización, porque al convertirlos en
+etiquetas enteras se perdió precisión. Por ejemplo, si varios
+coeficientes distintos produjeron la misma etiqueta, ya no
+es posible distinguir cuál era el original.
+
+El resultado Xtransrec contiene coeficientes DCT aproximados
+de Y, Cb y Cr y conserva el tamaño mamp por namp por 3.
+
+Todavía no contiene los píxeles reconstruidos. Para obtenerlos,
+el siguiente paso será aplicar la DCT inversa.
+
+## Paso 11. Aplicar la DCT inversa
+
+Xtransrec contiene los coeficientes DCT reconstruidos
+después de la descuantización.
+
+Utilizo imidct para convertir esos coeficientes en muestras
+de imagen:
+
+    Xamprec = imidct(Xtransrec, m, n);
+
+La función aplica la DCT inversa por bloques de 8×8,
+de forma independiente a las componentes Y, Cb y Cr.
+
+Durante la compresión, imdct restó 128 a las muestras
+antes de transformarlas. Ahora imidct suma 128 después
+de la transformación inversa para deshacer ese centrado.
+
+### Resultado de esta etapa
+
+Obtengo Xamprec, que contiene las muestras reconstruidas
+en el espacio de color YCbCr.
+
+La implementación de imidct de esta librería mantiene
+el tamaño ampliado mamp por namp por 3. Aunque recibe
+m y n, no utiliza esos valores para recortar la matriz.
+
+La imagen reconstruida puede diferir de la original
+por la pérdida de precisión introducida en la cuantización.
+
+Todavía falta convertir de YCbCr a RGB, eliminar los bordes
+añadidos durante la ampliación y guardar la imagen.
+
+## Paso 12. Convertir a RGB y guardar la imagen reconstruida
+
+Después de la DCT inversa, Xamprec contiene la imagen
+reconstruida en YCbCr y conserva las dimensiones ampliadas.
+
+### Convertir de YCbCr a RGB
+
+Divido Xamprec entre 255 para expresar sus muestras
+en la escala que utiliza la función ycbcr2rgb de la librería.
+
+Después de convertir a RGB, multiplico por 255 para volver
+a la escala de almacenamiento de la imagen. Redondeo los
+resultados y los convierto a uint8, obteniendo Xrgb.
+
+La conversión a uint8 deja los valores entre 0 y 255,
+adecuados para una imagen RGB de 8 bits por canal.
+
+### Recuperar el tamaño original
+
+Durante la compresión se pudieron añadir filas y columnas
+para trabajar con bloques completos de 8×8.
+
+Conservo únicamente las primeras m filas y las primeras
+n columnas, manteniendo los tres canales RGB:
+
+    Xrec = Xrgb(1:m, 1:n, :);
+
+Así obtengo la imagen reconstruida con las dimensiones
+originales. Si no se añadieron bordes, el tamaño no cambia.
+
+### Guardar el resultado
+
+Utilizo imwrite para guardar Xrec como un archivo BMP,
+con el nombre preparado en archivoSalida:
+comprimido_des_cus.bmp.
+
+Conservo también Xrec en memoria para calcular después
+el MSE y mostrarla junto a la imagen original.
+
+## Paso 13. Calcular el error cuadrático medio
+
+Comparo la imagen original X con la imagen reconstruida Xrec.
+Ambas están representadas en RGB y tienen las mismas dimensiones.
+
+Primero convierto las dos matrices a double y calculo
+la diferencia entre sus muestras correspondientes.
+
+La conversión debe realizarse antes de restar, porque
+las imágenes son uint8 y ese tipo no permite representar
+diferencias negativas.
+
+Después elevo cada diferencia al cuadrado mediante .^2.
+Así, los errores positivos y negativos no se cancelan,
+y las diferencias grandes tienen más peso.
+
+Finalmente, calculo la media de todos los errores cuadrados.
+Utilizo (:) para incluir todas las filas, columnas y los
+tres canales RGB en una única media.
+
+El resultado MSE se interpreta así:
+
+- MSE igual a cero: las imágenes coinciden en todas sus muestras.
+- MSE mayor que cero: existen diferencias entre las imágenes.
+- Un MSE menor indica menor error cuadrático, aunque no describe
+  por completo la calidad visual.
+
+El MSE mide el error de la reconstrucción completa, incluida
+la cuantización y las conversiones de color. La codificación
+Huffman, si funciona correctamente, no introduce pérdida.
+
+## Paso 14. Calcular el porcentaje de espacio ahorrado
+
+Calculo RC utilizando dos tamaños expresados en bytes:
+
+- TO: tamaño del archivo original, guardado por el compresor
+  y recuperado de la cabecera.
+- TC: tamaño real del archivo .huc completo, obtenido
+  al comenzar la descompresión.
+
+Aplico la misma fórmula que en jcom_custom:
+
+    RC = 100 * (TO - TC) / TO;
+
+El resultado indica qué porcentaje del tamaño original
+se ha ahorrado. Por ejemplo, RC = 60 significa que el archivo
+comprimido ocupa el 40 % del tamaño del original.
+
+RC puede ser negativa si el comprimido ocupa más que
+el archivo original.
+
+No utilizo el tamaño del BMP reconstruido: RC compara
+el archivo original con el comprimido, no con la imagen
+guardada después de descomprimir.
+
+Para un mismo archivo .huc, el resultado debe coincidir
+con el RC devuelto por jcom_custom.
+
+## Paso 15. Comparar visualmente las imágenes
+
+Creo una ventana con figure y la divido mediante subplot
+en una fila con dos columnas.
+
+En la posición izquierda muestro X, la imagen original
+representada en RGB. En la derecha muestro Xrec, la imagen
+reconstruida tras descomprimir el archivo .huc.
+
+Utilizo imshow para mostrar cada imagen y title para
+identificarlas.
+
+Esta comparación permite observar diferencias como pérdida
+de detalle, cambios de color o bloques visibles. Complementa
+el MSE, porque un único valor numérico no indica dónde
+se concentran los errores ni cómo se perciben.
+
+Las diferencias introducidas por la cuantización pueden
+ser esperables. La codificación y decodificación Huffman,
+si funcionan correctamente, deben conservar exactamente
+las etiquetas cuantizadas.
