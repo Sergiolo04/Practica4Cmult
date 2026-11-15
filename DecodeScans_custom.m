@@ -47,14 +47,4 @@ function XScanrec = DecodeScans_custom( ...
     % Reunir las tres componentes.
     XScanrec = cat(3, YScanrec, CbScanrec, CrScanrec);
 
-    % PASO 15: mostrar la imagen original y la reconstruida.
-    figure;
-
-    subplot(1, 2, 1);
-    imshow(X);
-    title('Imagen original');
-
-    subplot(1, 2, 2);
-    imshow(Xrec);
-    title('Imagen descomprimida custom');
 end

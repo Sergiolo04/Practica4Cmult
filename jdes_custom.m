@@ -221,5 +221,17 @@ function [MSE, RC] = jdes_custom(fname)
 
     % PASO 14: calcular el porcentaje de espacio ahorrado.
     RC = 100 * (TO - TC) / TO;
+
+
+    % PASO 15: mostrar la imagen original y la reconstruida.
+    figure;
+
+    subplot(1, 2, 1);
+    imshow(X);
+    title('Imagen original');
+
+    subplot(1, 2, 2);
+    imshow(Xrec);
+    title('Imagen descomprimida custom');
     
 end
