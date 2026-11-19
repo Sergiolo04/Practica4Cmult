@@ -1,0 +1,124 @@
+\babel@toc {spanish}{}\relax 
+\contentsline {chapter}{Cómo estudiar esta guía}{\es@scroman {i}}{chapter*.1}%
+\contentsline {chapter}{\numberline {1}El problema y el recorrido completo}{1}{chapter.1}%
+\contentsline {section}{\numberline {1.1}Qué construye el ejercicio}{1}{section.1.1}%
+\contentsline {section}{\numberline {1.2}Mapa de ida y vuelta}{1}{section.1.2}%
+\contentsline {section}{\numberline {1.3}Qué cambia frente a dflt}{1}{section.1.3}%
+\contentsline {chapter}{\numberline {2}La teoría mínima, entendida con ejemplos}{3}{chapter.2}%
+\contentsline {section}{\numberline {2.1}Píxeles, componentes y bloques}{3}{section.2.1}%
+\contentsline {section}{\numberline {2.2}Qué significa la DCT}{3}{section.2.2}%
+\contentsline {section}{\numberline {2.3}Cuantizar no es aplicar Huffman}{3}{section.2.3}%
+\contentsline {section}{\numberline {2.4}Zigzag: cambiar el orden, no los valores}{4}{section.2.4}%
+\contentsline {section}{\numberline {2.5}Categoría C y posición P}{4}{section.2.5}%
+\contentsline {section}{\numberline {2.6}DC diferencial y rachas de AC}{5}{section.2.6}%
+\contentsline {section}{\numberline {2.7}Huffman canónico y las cuatro familias de tablas}{5}{section.2.7}%
+\contentsline {chapter}{\numberline {3}Compresión: entender cada instrucción}{6}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Antes de ejecutar: leer la sintaxis de MATLAB}{6}{section.3.1}%
+\contentsline {section}{\numberline {3.2}Arranque del compresor: contrato, controles y archivo original}{6}{section.3.2}%
+\contentsline {subsection}{\numberline {3.2.1}La declaración de la función}{6}{subsection.3.2.1}%
+\contentsline {subsection}{\numberline {3.2.2}Validar caliQ antes de procesar}{7}{subsection.3.2.2}%
+\contentsline {subsection}{\numberline {3.2.3}Guardar TO y elegir el nombre de salida}{7}{subsection.3.2.3}%
+\contentsline {section}{\numberline {3.3}Preparar los bloques y transformar la imagen}{8}{section.3.3}%
+\contentsline {subsection}{\numberline {3.3.1}imlee: interpretar sus siete resultados}{8}{subsection.3.3.1}%
+\contentsline {subsection}{\numberline {3.3.2}imdct: pasar de muestras a coeficientes}{8}{subsection.3.3.2}%
+\contentsline {subsection}{\numberline {3.3.3}quantmat: introducir la pérdida controlada}{8}{subsection.3.3.3}%
+\contentsline {subsection}{\numberline {3.3.4}scan: preparar el recorrido de los coeficientes}{9}{subsection.3.3.4}%
+\contentsline {section}{\numberline {3.4}Entrar en EncodeScans\_custom: la parte específica de Huffman}{9}{section.3.4}%
+\contentsline {subsection}{\numberline {3.4.1}La llamada que conecta el programa principal con la auxiliar}{9}{subsection.3.4.1}%
+\contentsline {subsection}{\numberline {3.4.2}Contrato de la auxiliar y separación de planos}{10}{subsection.3.4.2}%
+\contentsline {subsection}{\numberline {3.4.3}CollectScan: producir las dos clases de símbolos}{10}{subsection.3.4.3}%
+\contentsline {subsection}{\numberline {3.4.4}Freq256: contar los símbolos adecuados}{11}{subsection.3.4.4}%
+\contentsline {subsection}{\numberline {3.4.5}HSpecTables: diseñar las longitudes y el orden de símbolos}{11}{subsection.3.4.5}%
+\contentsline {subsection}{\numberline {3.4.6}Las cuatro tablas de consulta: analizar el patrón repetido}{12}{subsection.3.4.6}%
+\contentsline {subsection}{\numberline {3.4.7}Emitir los tres flujos y devolver resultados}{12}{subsection.3.4.7}%
+\contentsline {section}{\numberline {3.5}Volver a jcom\_custom: empaquetar y definir el contenedor}{13}{section.3.5}%
+\contentsline {subsection}{\numberline {3.5.1}Empaquetar no es volver a comprimir con otro algoritmo}{13}{subsection.3.5.1}%
+\contentsline {subsection}{\numberline {3.5.2}Controlar el rango antes de convertir}{14}{subsection.3.5.2}%
+\contentsline {subsection}{\numberline {3.5.3}Celdas: guardar cuatro vectores de tamaños diferentes}{14}{subsection.3.5.3}%
+\contentsline {subsection}{\numberline {3.5.4}Normalizar BITS: entender cada línea del bucle}{15}{subsection.3.5.4}%
+\contentsline {section}{\numberline {3.6}Escribir bytes con un contrato verificable}{15}{section.3.6}%
+\contentsline {subsection}{\numberline {3.6.1}Abrir la salida y detectar un fallo de apertura}{15}{subsection.3.6.1}%
+\contentsline {subsection}{\numberline {3.6.2}Calcular el tamaño esperado antes de escribir}{16}{subsection.3.6.2}%
+\contentsline {subsection}{\numberline {3.6.3}Escribir cabecera y especificaciones}{16}{subsection.3.6.3}%
+\contentsline {subsection}{\numberline {3.6.4}Escribir Y, Cb y Cr sin confundir sus límites}{17}{subsection.3.6.4}%
+\contentsline {subsection}{\numberline {3.6.5}Control de escritura y ruta de error}{17}{subsection.3.6.5}%
+\contentsline {subsection}{\numberline {3.6.6}Cerrar correctamente en el camino normal}{18}{subsection.3.6.6}%
+\contentsline {subsection}{\numberline {3.6.7}Medir TC, devolver RC y terminar}{18}{subsection.3.6.7}%
+\contentsline {section}{\numberline {3.7}Seguir una ejecución sin perderse entre funciones}{18}{section.3.7}%
+\contentsline {chapter}{\numberline {4}El contrato binario del archivo .huc}{20}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Campos, tipos y orden}{20}{section.4.1}%
+\contentsline {section}{\numberline {4.2}Por qué se eligieron esos tipos}{20}{section.4.2}%
+\contentsline {section}{\numberline {4.3}Tamaño total y límites del formato}{21}{section.4.3}%
+\contentsline {chapter}{\numberline {5}Descompresión: entender cada instrucción}{22}{chapter.5}%
+\contentsline {section}{\numberline {5.1}Entrada, salida y referencia para evaluar}{22}{section.5.1}%
+\contentsline {subsection}{\numberline {5.1.1}Qué recibe y qué devuelve jdes\_custom}{22}{subsection.5.1.1}%
+\contentsline {subsection}{\numberline {5.1.2}Pedir el original: lectura de texto y comprobación}{23}{subsection.5.1.2}%
+\contentsline {subsection}{\numberline {5.1.3}Recibir solo las salidas que hacen falta}{23}{subsection.5.1.3}%
+\contentsline {section}{\numberline {5.2}Abrir el archivo y entender la lectura binaria}{24}{section.5.2}%
+\contentsline {subsection}{\numberline {5.2.1}Descriptor y cierre automático}{24}{subsection.5.2.1}%
+\contentsline {subsection}{\numberline {5.2.2}Leer cuatro elementos, no cuatro bytes}{24}{subsection.5.2.2}%
+\contentsline {subsection}{\numberline {5.2.3}Asignar significado a cada posición y validar}{25}{subsection.5.2.3}%
+\contentsline {subsection}{\numberline {5.2.4}Reconstruir tamaños ampliados y contrastar la referencia}{25}{subsection.5.2.4}%
+\contentsline {section}{\numberline {5.3}Leer las cuatro tablas sin perder la posición del archivo}{26}{section.5.3}%
+\contentsline {subsection}{\numberline {5.3.1}Reservar celdas y comenzar el bucle}{26}{subsection.5.3.1}%
+\contentsline {subsection}{\numberline {5.3.2}Leer BITS y averiguar cuántos símbolos vienen después}{26}{subsection.5.3.2}%
+\contentsline {subsection}{\numberline {5.3.3}Leer HUFFVAL, descartar duplicados y almacenar}{27}{subsection.5.3.3}%
+\contentsline {subsection}{\numberline {5.3.4}Recuperar nombres explícitos para la interfaz}{27}{subsection.5.3.4}%
+\contentsline {section}{\numberline {5.4}Leer las componentes: tamaño, indicador y datos}{28}{section.5.4}%
+\contentsline {subsection}{\numberline {5.4.1}Preparar el bucle común para Y, Cb y Cr}{28}{subsection.5.4.1}%
+\contentsline {subsection}{\numberline {5.4.2}Leer la longitud y ultl antes del vector}{28}{subsection.5.4.2}%
+\contentsline {subsection}{\numberline {5.4.3}Comprobar el indicador y que la longitud sea posible}{29}{subsection.5.4.3}%
+\contentsline {subsection}{\numberline {5.4.4}Leer los bytes y conservar los tres resultados}{29}{subsection.5.4.4}%
+\contentsline {subsection}{\numberline {5.4.5}Extraer variables y terminar la lectura}{30}{subsection.5.4.5}%
+\contentsline {section}{\numberline {5.5}Recuperar los bits y decodificar las etiquetas}{30}{section.5.5}%
+\contentsline {subsection}{\numberline {5.5.1}bytes2bits: recuperar exactamente la secuencia anterior}{30}{subsection.5.5.1}%
+\contentsline {subsection}{\numberline {5.5.2}Llamar a la auxiliar con el tamaño y las tablas correctos}{31}{subsection.5.5.2}%
+\contentsline {subsection}{\numberline {5.5.3}Interfaz de DecodeScans\_custom}{31}{subsection.5.5.3}%
+\contentsline {subsection}{\numberline {5.5.4}Reconstruir las cuatro tablas de decodificación}{32}{subsection.5.5.4}%
+\contentsline {subsection}{\numberline {5.5.5}DecodeSingleScan: argumentos y retorno de cada plano}{33}{subsection.5.5.5}%
+\contentsline {subsection}{\numberline {5.5.6}Reunir planos y regresar al programa principal}{33}{subsection.5.5.6}%
+\contentsline {section}{\numberline {5.6}Reconstruir la imagen a partir de las etiquetas}{34}{section.5.6}%
+\contentsline {subsection}{\numberline {5.6.1}invscan: devolver cada etiqueta a su frecuencia}{34}{subsection.5.6.1}%
+\contentsline {subsection}{\numberline {5.6.2}desquantmat: qué se puede recuperar y qué no}{34}{subsection.5.6.2}%
+\contentsline {subsection}{\numberline {5.6.3}imidct: deshacer la transformación y el centrado}{34}{subsection.5.6.3}%
+\contentsline {subsection}{\numberline {5.6.4}Descomponer la conversión a RGB en operaciones sencillas}{35}{subsection.5.6.4}%
+\contentsline {subsection}{\numberline {5.6.5}Recortar el borde y escribir un BMP real}{35}{subsection.5.6.5}%
+\contentsline {section}{\numberline {5.7}Medir calidad, medir tamaño y mostrar resultados}{35}{section.5.7}%
+\contentsline {subsection}{\numberline {5.7.1}MSE: calcular sin errores de tipo ni de dimensiones}{35}{subsection.5.7.1}%
+\contentsline {subsection}{\numberline {5.7.2}RC: una métrica distinta del error de imagen}{36}{subsection.5.7.2}%
+\contentsline {subsection}{\numberline {5.7.3}La figura y el final de la función}{36}{subsection.5.7.3}%
+\contentsline {section}{\numberline {5.8}Comprobar que puedes explicar cualquier línea}{37}{section.5.8}%
+\contentsline {chapter}{\numberline {6}Ejemplo resuelto y seguimiento de variables}{38}{chapter.6}%
+\contentsline {section}{\numberline {6.1}Un bloque sencillo de principio a fin}{38}{section.6.1}%
+\contentsline {section}{\numberline {6.2}Diccionario de las matrices principales}{38}{section.6.2}%
+\contentsline {chapter}{\numberline {7}Validación, errores y límites reales}{40}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Qué demuestra la prueba comunicada}{40}{section.7.1}%
+\contentsline {section}{\numberline {7.2}La comprobación exacta de Huffman}{40}{section.7.2}%
+\contentsline {section}{\numberline {7.3}Un detalle de las auxiliares que conviene revisar}{41}{section.7.3}%
+\contentsline {section}{\numberline {7.4}Errores encontrados durante el desarrollo}{41}{section.7.4}%
+\contentsline {chapter}{\numberline {8}Preparar la entrevista con el profesor}{42}{chapter.8}%
+\contentsline {section}{\numberline {8.1}Explicación de dos minutos}{42}{section.8.1}%
+\contentsline {subsection}{\numberline {8.1.1}¿Dónde se pierde información?}{42}{subsection.8.1.1}%
+\contentsline {subsection}{\numberline {8.1.2}¿Por qué no aplicas Huffman directamente a RGB?}{42}{subsection.8.1.2}%
+\contentsline {subsection}{\numberline {8.1.3}¿Cuantizas también el DC?}{42}{subsection.8.1.3}%
+\contentsline {subsection}{\numberline {8.1.4}¿Por qué cuatro tablas y no tres o seis?}{43}{subsection.8.1.4}%
+\contentsline {subsection}{\numberline {8.1.5}¿Qué diferencia hay entre C y P?}{43}{subsection.8.1.5}%
+\contentsline {subsection}{\numberline {8.1.6}¿Qué significa BITS(3)=2?}{43}{subsection.8.1.6}%
+\contentsline {subsection}{\numberline {8.1.7}¿Cómo reconstruyes códigos sin guardar el árbol?}{43}{subsection.8.1.7}%
+\contentsline {subsection}{\numberline {8.1.8}¿El descompresor necesita la imagen original?}{43}{subsection.8.1.8}%
+\contentsline {subsection}{\numberline {8.1.9}¿Por qué guardas caliQ?}{43}{subsection.8.1.9}%
+\contentsline {subsection}{\numberline {8.1.10}¿Por qué guardas TO si ya conoces m y n?}{43}{subsection.8.1.10}%
+\contentsline {subsection}{\numberline {8.1.11}¿Qué representa ultl=0?}{43}{subsection.8.1.11}%
+\contentsline {subsection}{\numberline {8.1.12}¿Custom siempre ocupa menos que dflt?}{43}{subsection.8.1.12}%
+\contentsline {subsection}{\numberline {8.1.13}¿Por qué coinciden las RC y el MSE no es cero?}{44}{subsection.8.1.13}%
+\contentsline {subsection}{\numberline {8.1.14}¿Cómo demostrarías que Huffman funciona?}{44}{subsection.8.1.14}%
+\contentsline {subsection}{\numberline {8.1.15}¿Qué has implementado y qué has reutilizado?}{44}{subsection.8.1.15}%
+\contentsline {subsection}{\numberline {8.1.16}¿Qué mejorarías?}{44}{subsection.8.1.16}%
+\contentsline {section}{\numberline {8.2}Ejercicios para comprobar que lo entiendes}{44}{section.8.2}%
+\contentsline {chapter}{\numberline {9}Correspondencia con el diario y fuentes}{45}{chapter.9}%
+\contentsline {section}{\numberline {9.1}Cómo encajan los pasos de desarrollo}{45}{section.9.1}%
+\contentsline {section}{\numberline {9.2}Material utilizado y alcance}{45}{section.9.2}%
+\contentsline {chapter}{\numberline {A}Código completo del compresor}{46}{appendix.Alph1}%
+\contentsline {chapter}{\numberline {B}Código completo de la auxiliar de codificación}{49}{appendix.Alph2}%
+\contentsline {chapter}{\numberline {C}Código completo del descompresor}{51}{appendix.Alph3}%
+\contentsline {chapter}{\numberline {D}Código completo de la auxiliar de decodificación}{55}{appendix.Alph4}%

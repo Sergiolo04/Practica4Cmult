@@ -1,0 +1,3148 @@
+\documentclass[11pt,a4paper,oneside]{report}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage[margin=25mm,headheight=15pt]{geometry}
+\usepackage{amsmath,amssymb,booktabs,longtable,array,listings,fancyhdr}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{pdftitle={Guía de estudio: jcom custom y jdes custom},pdfauthor={Material de estudio de la práctica 4}}
+\setlength{\parskip}{6pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{3em}
+\renewcommand{\baselinestretch}{1.08}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small Compresión multimedia | Práctica 4}
+\fancyhead[R]{\small Guía de estudio}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+\lstset{basicstyle=\ttfamily\scriptsize,columns=fullflexible,keepspaces=true,
+breaklines=true,breakatwhitespace=false,showstringspaces=false,
+numbers=left,numberstyle=\tiny,numbersep=8pt,frame=single,rulecolor=\color{black},
+keywordstyle=\bfseries,commentstyle=\itshape,tabsize=4,
+aboveskip=10pt,belowskip=10pt}
+\usepackage{xcolor}
+\makeatletter
+\def\@makechapterhead#1{\vspace*{8pt}{\parindent\z@\raggedright\normalfont
+\ifnum\c@secnumdepth>\m@ne\Large\bfseries\@chapapp\space\thechapter\par\nobreak\vskip12pt\fi
+\huge\bfseries #1\par\nobreak\vskip24pt}}
+\makeatother
+
+\begin{document}
+\begin{titlepage}
+\vspace*{12mm}
+{\large COMPRESIÓN MULTIMEDIA\par}
+\vspace{4mm}{\large Práctica 4 · Ejercicio 2\par}
+\vspace{17mm}\hrule\vspace{9mm}
+{\Huge\bfseries Compresión de imágenes\par}
+\vspace{3mm}{\huge con Huffman a medida\par}
+\vspace{9mm}\hrule
+\vspace{12mm}{\Large Comprender \texttt{jcom\_custom}\par
+y \texttt{jdes\_custom}\par}
+\vspace{10mm}
+{\large Teoría desde cero y lectura detallada del código\par
+y preparación de la defensa oral\par}
+\vfill
+\begin{minipage}{0.9\textwidth}
+Guía elaborada a partir del diario de desarrollo y del código
+real del proyecto. Incluye el formato binario, ejemplos resueltos,
+comprobaciones y los cuatro archivos principales con líneas numeradas.
+\end{minipage}
+\vspace{13mm}\par
+15 de noviembre de 2026 · Edición ampliada
+\end{titlepage}
+\pagenumbering{roman}
+\chapter*{Cómo estudiar esta guía}
+\addcontentsline{toc}{chapter}{Cómo estudiar esta guía}
+No necesitas memorizar todas las líneas. Debes poder explicar qué información
+entra en cada etapa, qué sale, por qué se hace y qué función la ejecuta.
+Lee primero los capítulos 1 y 2; después sigue el compresor y el descompresor
+con los listados del apéndice abiertos. Por último, resuelve los ejemplos y
+contesta las preguntas sin mirar la respuesta.
+
+La numeración de pasos del diario no siempre coincide con los comentarios
+del código: algunas etapas del diario ocurren dentro de una auxiliar.
+Esta guía conserva esa distinción y proporciona referencias a líneas reales.
+Las referencias corresponden a la copia del proyecto consultada al generar
+este documento; si editas los archivos, sus líneas pueden cambiar.
+
+El objetivo es que comprendas y puedas explicar tus decisiones con tus propias
+palabras. Distingue lo implementado por ti de las auxiliares suministradas
+por la librería. La prueba comunicada por el estudiante se presenta como tal;
+no equivale a una nueva ejecución de MATLAB ni a una validación exhaustiva.
+\setcounter{tocdepth}{1}
+\tableofcontents
+\clearpage\pagenumbering{arabic}
+\chapter{El problema y el recorrido completo}
+
+\section{Qué construye el ejercicio}
+
+Construyes un compresor con pérdida para imágenes y un descompresor compatible.
+El compresor transforma la imagen, cuantiza los coeficientes y codifica las
+etiquetas resultantes con tablas Huffman calculadas para esa imagen.
+El archivo obtenido utiliza tu propio contenedor \texttt{.huc}. No es un
+archivo JPEG estándar: comparte ideas de JPEG, pero no implementa sus
+marcadores ni toda su estructura de intercambio.
+
+\texttt{jcom\_custom(fname,caliQ)} recibe la ruta de una imagen, produce
+\texttt{comprimido.huc} y devuelve el ahorro porcentual RC.
+\texttt{jdes\_custom(fname)} recibe la ruta del comprimido, produce
+\texttt{comprimido\_des\_cus.bmp} y devuelve MSE y RC.
+El nombre fijo de salida es una decisión de tu implementación: una nueva
+ejecución puede sobrescribir el resultado anterior.
+
+
+\section{Mapa de ida y vuelta}
+
+\begin{center}\begin{tabular}{p{.43\textwidth}p{.43\textwidth}}
+\toprule Compresión & Descompresión \\\midrule
+RGB original & Bytes y tablas del .huc\\
+YCbCr y ampliación & Desempaquetado de bytes\\
+DCT por bloques & Decodificación Huffman\\
+Cuantización & Etiquetas en zigzag\\
+Zigzag & Zigzag inverso\\
+DC diferencial y AC con rachas & Descuantización\\
+Frecuencias y Huffman canónico & DCT inversa y suma de 128\\
+Codificación y empaquetado & Conversión a RGB y recorte\\
+Cabecera, tablas y bytes en .huc & BMP reconstruido, MSE y RC\\\bottomrule
+\end{tabular}\end{center}
+Las dos ramas no son inversas exactas en todos sus pasos. La cuantización
+descarta precisión; la descuantización solo aproxima. En cambio, el zigzag,
+la representación de símbolos, Huffman y el empaquetado deben ser reversibles.
+
+\textbf{Idea central:} primero se obtiene una representación que admite
+pérdida controlada; después se almacena esa representación sin perder nada más.
+
+
+\section{Qué cambia frente a dflt}
+
+La lectura, conversión de color, DCT, cuantización, zigzag y reconstrucción
+se mantienen. En \texttt{dflt}, las tablas Huffman son conocidas de antemano.
+En \texttt{custom}, se calculan a partir de los símbolos de la imagen
+ya cuantizada. Como el descompresor no puede adivinarlas, se guardan sus
+especificaciones BITS/HUFFVAL dentro del archivo.
+
+No se calculan las frecuencias de los píxeles RGB para esta codificación.
+Se cuentan las categorías de las diferencias DC y los símbolos AC que
+combinan racha y categoría. Tampoco se crean seis tablas: son cuatro,
+porque Cb y Cr comparten las dos de crominancia.
+
+
+\chapter{La teoría mínima, entendida con ejemplos}
+\section{Píxeles, componentes y bloques}
+
+Una imagen RGB de altura $m$ y anchura $n$ contiene tres números por píxel:
+rojo, verde y azul. En la representación de 8 bits, cada muestra está entre
+0 y 255. En MATLAB, $m$ es el número de filas y $n$ el número de columnas.
+
+YCbCr separa una componente relacionada con el brillo (Y) de dos diferencias
+de color (Cb y Cr). Esto permite tratar luminancia y crominancia con tablas
+de cuantización distintas. Tu código conserva tres planos de igual tamaño:
+\textbf{no realiza submuestreo 4:2:0 ni reduce espacialmente Cb o Cr}.
+
+Cada componente se divide en bloques de $8\times8$. Si una dimensión no es
+múltiplo de ocho, \texttt{imlee} replica el borde hasta completarla. Por ejemplo,
+una imagen de $13\times10$ pasa a $16\times16$. Repetir el borde evita introducir
+un salto artificial a cero. Se guardan las dimensiones originales para recortar
+al final. El número de bloques por componente es
+$N_b=(m_{amp}/8)(n_{amp}/8)$.
+
+
+\section{Qué significa la DCT}
+
+La DCT expresa un bloque como combinación de 64 patrones de distinta frecuencia
+espacial. Una frecuencia baja representa cambios suaves; una alta representa
+alternancias rápidas, bordes y detalles. Los coeficientes indican cuánto
+participa cada patrón. No son píxeles ni coordenadas.
+
+El DC corresponde al patrón constante; está relacionado con el nivel medio.
+Con la DCT ortonormal de esta librería, para un bloque centrado de media $a$,
+el DC vale $8a$. Los otros 63 coeficientes son AC y describen variaciones.
+Un bloque constante ideal tiene únicamente DC distinto de cero.
+
+Si $T$ es la matriz DCT de orden 8 y $B$ un bloque de muestras,
+\[
+F=T(B-128)T^{\mathsf T},\qquad
+\widehat B=T^{\mathsf T}\widehat F T+128.
+\]
+Restar 128 centra la señal alrededor de cero; no es una cuantización.
+La DCT es invertible en aritmética exacta. El ahorro aparece sobre todo
+cuando cuantizamos y muchos coeficientes pequeños se convierten en cero.
+
+
+\section{Cuantizar no es aplicar Huffman}
+
+Cada posición DCT tiene su propio escalón $Q(u,v)$. La librería calcula
+\[
+Q=\max\!\left(\operatorname{round}(Q_{base}\,caliQ/100),1\right)
+\]
+elemento a elemento. Después \texttt{quant88} aplica exactamente
+\[
+L(u,v)=\left\lfloor \frac{F(u,v)}{Q(u,v)}+0.5\right\rfloor.
+\]
+No es simplemente truncar ni multiplicar el coeficiente por caliQ.
+\texttt{floor} redondea hacia menos infinito después de sumar 0,5.
+En los empates negativos puede diferir de \texttt{round} de MATLAB:
+$\lfloor-1.5+0.5\rfloor=-1$.
+
+Por ejemplo, con $F=37$ y $Q=10$, la etiqueta es 4. Al descuantizar obtenemos
+$\widehat F=4\cdot10=40$, no 37. Con $F=3$ y $Q=10$, la etiqueta es cero.
+Varios valores producen la misma etiqueta: esa información ya no puede recuperarse.
+
+Con caliQ=100 se usan las tablas base; con 50 los escalones suelen ser menores
+y la calidad mayor; con 500 son mayores y suele haber más ceros y más pérdida.
+\textbf{En esta práctica aumentar caliQ no significa aumentar la calidad}.
+No debe confundirse con el selector habitual de calidad de un editor JPEG.
+
+
+\section{Zigzag: cambiar el orden, no los valores}
+
+El zigzag comienza en DC y visita después las posiciones AC de frecuencias
+progresivamente más altas, siguiendo diagonales. No ordena los coeficientes
+por su valor numérico. Como muchas frecuencias altas quedan a cero tras
+cuantizar, tienden a aparecer rachas largas de ceros al final del recorrido.
+
+Tu \texttt{scan} conserva el tamaño tridimensional: reorganiza cada bloque
+para poder leer por filas la secuencia zigzag. No devuelve directamente
+una matriz de 64 columnas. \texttt{CollectScan} extrae cada bloque y lo convierte
+en un vector; \texttt{invscan} deshace la permutación al reconstruir.
+
+
+\section{Categoría C y posición P}
+
+Huffman no codifica directamente todos los enteros con signo. Se representa
+un valor $v$ mediante categoría y posición:
+\[
+C=\lceil\log_2(|v|+1)\rceil,\qquad
+P=\begin{cases}v,&v\geq0,\\2^C-1+v,&v<0.\end{cases}
+\]
+Para valores no nulos, C indica cuántos bits de amplitud se necesitan.
+La categoría 0 corresponde al valor cero. P identifica el valor dentro de su
+categoría; no es la posición del coeficiente en el bloque.
+
+\begin{center}\begin{tabular}{rrrrl}\toprule
+$v$ & C & P & Bits de P & Interpretación\\\midrule
+0&0&0&ninguno&Valor cero\\
+1&1&1&1&Positivo\\
+-1&1&0&0&Negativo\\
+5&3&5&101&Positivo\\
+-5&3&2&010&Negativo\\\bottomrule
+\end{tabular}\end{center}
+El signo está implícito en estos bits; no se añade un bit de signo independiente
+ni se utiliza complemento a dos. Para $C>0$, si $P<2^{C-1}$, el valor es
+$P-(2^C-1)$; en caso contrario es P. Para C=0 se recupera cero sin leer amplitud.
+
+
+\section{DC diferencial y rachas de AC}
+
+Para los DC se codifica la diferencia respecto al bloque anterior del mismo
+plano. Si los DC son 80, 83 y 79, se representan 80, 3 y -4. El primer
+DC se resta de cero. Al decodificar se acumulan las diferencias y se recuperan
+80, 83 y 79. Esta operación no pierde información y suele producir valores
+menores, con categorías más pequeñas. La referencia se reinicia para cada componente.
+
+En los AC se cuenta la cantidad Z de ceros antes de un valor no nulo y se
+combina con su categoría C mediante $s=16Z+C$. Por ejemplo, tres ceros
+seguidos de -5 producen $Z=3$, $C=3$, $s=51$ y $P=2$ (010).
+Huffman representa 51 y después se añaden los tres bits de P. Si solo
+contáramos C, perderíamos la cantidad de ceros.
+
+EOB es el símbolo 0, equivalente a Z=0,C=0: cierra el bloque y deja a cero
+los AC restantes. ZRL es 240, equivalente a Z=15,C=0, y representa 16 ceros.
+No es un AC de valor 240. Una racha de 20 ceros antes de un valor se representa
+con ZRL y luego un símbolo con Z=4. En tu \texttt{zercatpos} se añade un EOB
+a todos los bloques para simplificar el recorrido, incluso si no quedan ceros finales.
+
+
+\section{Huffman canónico y las cuatro familias de tablas}
+
+Un código prefijo permite reconocer cada palabra sin separadores: ninguna
+palabra válida es prefijo de otra. Huffman combina repetidamente los dos
+pesos menores para obtener longitudes que favorecen los símbolos frecuentes.
+La implementación adapta las longitudes a un máximo de 16 bits.
+
+\texttt{HSpecTables} añade temporalmente el símbolo 256 con frecuencia 1
+para reservar el código formado solo por unos. Ese símbolo no pertenece
+a los datos y se excluye del HUFFVAL final. \texttt{AdjustBits} ajusta longitudes
+y retira el punto reservado. No necesitas guardar un árbol de punteros.
+
+BITS cuenta códigos por longitud. HUFFVAL enumera los símbolos en el orden
+de asignación. Con ambas listas, el algoritmo canónico comienza en cero,
+incrementa el código dentro de una longitud y desplaza a la izquierda cuando
+pasa a una longitud mayor. Se reproducen los mismos códigos sin guardar frecuencias.
+
+Ejemplo didáctico: BITS(2)=2 y BITS(3)=2; los demás recuentos valen cero.
+HUFFVAL=[10,20,30,40]. Se asignan 00, 01, 100 y 101 respectivamente.
+Para consultar el símbolo 30, la tabla de codificación guarda el número 4
+y la longitud 3. Si el código fuera 001, guardar solo el número 1 perdería
+sus ceros iniciales; de ahí la necesidad de conservar también la longitud.
+
+
+\chapter{Compresión: entender cada instrucción}
+
+Este capítulo sigue la ejecución real de \texttt{jcom\_custom} y entra
+en \texttt{EncodeScans\_custom} cuando la primera la llama. No estudies las
+líneas como órdenes aisladas: sigue el dato que cambia de representación.
+En cada bloque se identifica la entrada, se interpreta la sintaxis y se explica
+qué queda preparado para el siguiente. Los números a la izquierda son las
+líneas del archivo original, no una nueva numeración de ejemplos.
+
+Al terminar debes poder señalar una variable y decir si contiene píxeles,
+coeficientes, etiquetas, símbolos, códigos o bytes. Esa distinción evita la
+mayoría de las confusiones al explicar el proyecto.
+
+\section{Antes de ejecutar: leer la sintaxis de MATLAB}
+
+\texttt{=} asigna un resultado a una variable; no es una comparación.
+\texttt{==} compara igualdad y \texttt{\textasciitilde=} significa distinto.
+El punto y coma final evita imprimir automáticamente el resultado, pero no
+impide que la instrucción se ejecute. Los comentarios comienzan por \% y no
+son órdenes ejecutables. \texttt{...} continúa una misma instrucción en la
+siguiente línea: no es un bucle ni una operación sobre los datos.
+
+Los paréntesis sirven para llamar a una función o indexar una matriz.
+\texttt{A(:,1)} selecciona todas las filas de la columna 1;
+\texttt{A(:,:,2)} selecciona el plano 2 completo. Los corchetes pueden
+recoger varias salidas de una función o concatenar matrices. Las llaves
+crean celdas o extraen su contenido. Por ejemplo, \texttt{[a;b]} coloca b
+debajo de a y \texttt{[a b]} lo coloca a la derecha, si sus dimensiones encajan.
+
+Un \texttt{if} ejecuta su interior cuando la condición es verdadera; un
+\texttt{for} repite un bloque. Cada \texttt{end} cierra el bloque correspondiente.
+Dentro de un índice, en cambio, \texttt{end} representa la última posición.
+Es el mismo término con dos usos que se distinguen por el contexto.
+
+\section{Arranque del compresor: contrato, controles y archivo original}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{La declaración de la función}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 1 a 5.
+
+\begin{lstlisting}[firstnumber=1]
+function RC = jcom_custom(fname, caliQ)
+    % Comprime una imagen utilizando tablas Huffman a medida.
+    % fname: nombre del archivo de imagen.
+    % caliQ: factor de cuantizacion, entero positivo.
+    % RC: porcentaje de espacio ahorrado.
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+\textbf{Qué entra.} fname identifica el archivo de imagen; caliQ determina
+la fuerza de la cuantización. \texttt{function RC = ...} indica una única
+salida, RC. En una llamada como \texttt{ahorro=jcom\_custom('Img00.bmp',100)},
+el argumento de texto se recibe en fname y 100 en caliQ. Al terminar, el valor
+local de RC se copia a ahorro: no hace falta que ambos nombres coincidan.
+
+La función crea su propio espacio de variables. Que exista una variable X
+en la ventana de comandos no significa que esta función pueda usarla sin
+recibirla o crearla. Del mismo modo, sus variables internas no se exportan
+automáticamente. El archivo .huc es un efecto de la función además de su
+salida numérica; no es el contenido de RC.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Validar caliQ antes de procesar}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 7 a 9.
+
+\begin{lstlisting}[firstnumber=7]
+    % PASO 1: validar la calidad y preparar los archivos.
+    validateattributes(caliQ, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'integer', 'positive'});
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+\texttt{validateattributes} recibe tres argumentos: el valor que se revisa,
+las clases admitidas y una lista de propiedades. Las dos listas se escriben
+con llaves porque son celdas de textos.
+
+\texttt{numeric} exige un tipo numérico; \texttt{scalar}, un único elemento;
+\texttt{real} excluye complejos; \texttt{finite} excluye NaN e infinito;
+\texttt{integer} exige valor entero aunque esté almacenado como double;
+\texttt{positive} exige que sea mayor que cero. Así, 100 es válido, 0 y 2,5
+no lo son, y un vector como [50 100] tampoco.
+
+Este control no cambia caliQ ni ajusta automáticamente la calidad: si falla,
+detiene la función con un error. Se hace al principio para no transformar
+una imagen con una entrada que incumple el contrato. No significa que caliQ
+deba almacenarse ya como uint32: su tipo de escritura se decide más tarde.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Guardar TO y elegir el nombre de salida}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 11 a 16.
+
+\begin{lstlisting}[firstnumber=11]
+    % Tamano original en bytes, necesario para calcular RC al final.
+    info = dir(fname);
+    TO = info.bytes;
+
+    % Nombre del archivo comprimido.
+    archivo = 'comprimido.huc';
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+\texttt{dir(fname)} consulta el archivo, no sus píxeles. Devuelve una estructura
+con campos; el punto de \texttt{info.bytes} accede a su tamaño en bytes.
+Ese número se asigna a TO y permanece disponible para RC y para la cabecera.
+No calculamos TO como altura por anchura por tres: el archivo de entrada
+puede tener cabeceras, paleta o compresión propia.
+
+\texttt{archivo='comprimido.huc'} guarda un texto. Todavía no abre ni crea
+nada. Si no se especifica una carpeta, la escritura posterior se hará en el
+directorio actual de MATLAB. El nombre fijo implica que otra ejecución puede
+reemplazar el resultado anterior. En esta parte, a diferencia del descompresor,
+no se añade una comprobación explícita con isfile; se presupone una ruta válida.
+
+
+\section{Preparar los bloques y transformar la imagen}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{imlee: interpretar sus siete resultados}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 18 a 19.
+
+\begin{lstlisting}[firstnumber=18]
+    % PASO 2: leer y acondicionar la imagen.
+    [X, Xamp, tipo, m, n, mamp, namp] = imlee(fname);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La llamada es una única instrucción que recoge siete salidas en el orden
+definido por imlee. X es el original representado en RGB uint8. Xamp es la
+imagen convertida a YCbCr, en double, con dimensiones ampliadas. tipo identifica
+si la entrada era indexada o truecolor. m y n son filas y columnas originales;
+mamp y namp son las dimensiones tras completar bloques.
+
+Dentro de imlee, una imagen indexada admitida se convierte primero a RGB.
+Después se convierte a YCbCr y se replican las últimas filas o columnas que
+sean necesarias. Por ejemplo, con m=13 y n=10, mamp=namp=16: se añaden tres
+filas y seis columnas. Cada canal se amplía igual y sigue habiendo tres planos.
+La función no elimina crominancia ni hace submuestreo.
+
+El compresor no usa después todas estas salidas: X, tipo y los tamaños ampliados
+pueden quedar sin nuevas referencias en el archivo principal. Eso no es una
+operación oculta. Las salidas forman parte de la interfaz reutilizada. m y n
+sí se guardarán para recuperar el tamaño final.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{imdct: pasar de muestras a coeficientes}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 21 a 22.
+
+\begin{lstlisting}[firstnumber=21]
+    % PASO 3: transformar la imagen mediante DCT.
+    Xtrans = imdct(Xamp);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+El argumento es Xamp, porque ya tiene el espacio de color y las dimensiones
+que requiere la transformación. No se pasa X, que contiene RGB sin preparar.
+La asignación crea Xtrans con el resultado; no cambia el significado de Xamp.
+
+La auxiliar resta 128, separa los tres planos, construye T con dctmtx(8)
+y usa blkproc para aplicar $TBT^{\mathsf T}$ a cada bloque centrado B.
+Después reúne los tres resultados. Cada bloque contiene DC en (1,1) y 63 AC.
+Xtrans mantiene el tamaño ampliado, pero ya no contiene intensidades de píxeles.
+
+Un coeficiente grande significa una contribución fuerte de un patrón, no un
+píxel muy luminoso en esa posición. La DCT por sí sola no reduce la cantidad
+de coeficientes. Su utilidad es hacer que la cuantización posterior pueda
+anular muchos valores pequeños con un coste visual asumible.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{quantmat: introducir la pérdida controlada}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 24 a 25.
+
+\begin{lstlisting}[firstnumber=24]
+    % PASO 4: cuantizar los coeficientes DCT.
+    Xlab = quantmat(Xtrans, caliQ);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+quantmat necesita dos entradas: los coeficientes y caliQ. Separa Y, Cb y Cr;
+utiliza QY para Y y QC para las otras dos. Las tablas se escalan con caliQ/100,
+se redondean y se limita cada escalón a un mínimo de uno.
+
+Para cada bloque, quant88 ejecuta \texttt{floor((x ./ P1)+0.5)}. El operador
+\texttt{./} divide elemento a elemento: cada coeficiente utiliza su propio
+escalón, no se calcula una división matricial. floor se aplica después de
+sumar 0,5. Por ejemplo, 37/10 produce la etiqueta 4, mientras 3/10 produce 0.
+DC y AC se cuantizan; ninguno de los 64 coeficientes está exento.
+
+Xlab contiene etiquetas enteras con signo, aunque la matriz sea double.
+Un valor entero y un tipo entero no son lo mismo: double puede almacenar
+exactamente muchas etiquetas enteras. No convertimos Xlab a uint8 porque
+perderíamos los negativos y otros valores fuera del rango 0 a 255.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{scan: preparar el recorrido de los coeficientes}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 27 a 28.
+
+\begin{lstlisting}[firstnumber=27]
+    % PASO 5: recorrer los bloques en zigzag.
+    XScan = scan(Xlab);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+scan recibe etiquetas cuantizadas y llama a zigzag64 por bloques. Conserva
+las dimensiones de la imagen y cambia las posiciones de las etiquetas dentro
+de cada bloque. El orden deja primero el DC y después los AC desde frecuencias
+bajas hacia altas. No ordena de menor a mayor valor numérico.
+
+En XScan los bloques se podrán leer por filas para obtener su secuencia
+zigzag. Los ceros que antes ocupaban distintas posiciones de frecuencia
+tienden a aparecer seguidos, facilitando la representación por rachas.
+Ningún valor se descarta: invscan puede deshacer esta permutación exactamente.
+
+
+\section{Entrar en EncodeScans\_custom: la parte específica de Huffman}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{La llamada que conecta el programa principal con la auxiliar}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 30 a 34.
+
+\begin{lstlisting}[firstnumber=30]
+    % PASO 6: construir las tablas a medida y codificar.
+    [CodedY, CodedCb, CodedCr, ...
+        BITS_Y_DC, HUFFVAL_Y_DC, BITS_Y_AC, HUFFVAL_Y_AC, ...
+        BITS_C_DC, HUFFVAL_C_DC, BITS_C_AC, HUFFVAL_C_AC] ...
+        = EncodeScans_custom(XScan);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Aquí MATLAB pausa el avance por jcom\_custom y ejecuta EncodeScans\_custom
+con XScan como entrada. Al regresar, asigna sus once salidas por posición:
+tres secuencias binarias y ocho vectores de especificaciones.
+
+Los puntos suspensivos solo hacen legible la instrucción. BITS y HUFFVAL
+son las especificaciones que se escribirán en el archivo; CodedY, CodedCb
+y CodedCr contienen los datos ya codificados de cada componente. No se están
+leyendo todavía desde disco ni se devuelve un archivo por cada componente.
+Para entender esta llamada hay que seguir ahora el interior de la auxiliar.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Contrato de la auxiliar y separación de planos}
+
+\textbf{Código real:} \texttt{EncodeScans\_custom.m}, líneas 1 a 9.
+
+\begin{lstlisting}[firstnumber=1]
+function [CodedY, CodedCb, CodedCr, ...
+    BITS_Y_DC, HUFFVAL_Y_DC, BITS_Y_AC, HUFFVAL_Y_AC, ...
+    BITS_C_DC, HUFFVAL_C_DC, BITS_C_AC, HUFFVAL_C_AC] ...
+    = EncodeScans_custom(XScan)
+
+    % Separar las tres componentes.
+    YScan  = XScan(:,:,1);
+    CbScan = XScan(:,:,2);
+    CrScan = XScan(:,:,3);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La cabecera declara las mismas once salidas que recoge el programa principal.
+La entrada es una matriz tridimensional XScan. La línea 7 selecciona todas
+las filas, todas las columnas y el plano 1; las dos siguientes hacen lo mismo
+con los planos 2 y 3. El resultado son tres matrices bidimensionales.
+
+No se convierte el color en estas líneas: ya se hizo en imlee. Tampoco se
+copian canales RGB. En esta etapa los planos contienen etiquetas Y, Cb y Cr
+en zigzag. Los nombres indican la componente, no una nueva transformación.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{CollectScan: producir las dos clases de símbolos}
+
+\textbf{Código real:} \texttt{EncodeScans\_custom.m}, líneas 11 a 14.
+
+\begin{lstlisting}[firstnumber=11]
+    % Preparar los simbolos DC y AC de cada componente.
+    [Y_DC_CP, Y_AC_ZCP]   = CollectScan(YScan);
+    [Cb_DC_CP, Cb_AC_ZCP] = CollectScan(CbScan);
+    [Cr_DC_CP, Cr_AC_ZCP] = CollectScan(CrScan);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada llamada devuelve dos matrices. Para Y, Y\_DC\_CP tiene una fila por
+bloque: columna 1, categoría de la diferencia DC; columna 2, su posición P.
+Y\_AC\_ZCP tiene una fila por símbolo AC emitido: columna 1, ZCdec; columna 2, P.
+Se repite el contrato para Cb y Cr.
+
+Dentro de CollectScan, DCprevio empieza en cero y se actualiza después de
+cada bloque. Los bloques se recorren por filas de bloques, de izquierda a
+derecha. La transposición antes de reshape convierte el recorrido habitual
+por columnas de MATLAB en la lectura por filas esperada para el zigzag.
+
+catpos calcula C y P para las diferencias DC. zercatpos localiza AC no nulos,
+cuenta sus ceros anteriores, calcula categorías y posiciones, emite ZRL si
+una racha supera 15 y añade EOB. Para AC=-5, C=3 y P=2; con tres ceros previos,
+el símbolo es 51. No se aplica Huffman todavía y no se cuentan frecuencias.
+
+Separar las llamadas evita que el último DC de Y se utilice como referencia
+del primero de Cb. La predicción pertenece a cada componente y se reinicia
+para cada una. Ese reinicio debe reproducirse al decodificar.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Freq256: contar los símbolos adecuados}
+
+\textbf{Código real:} \texttt{EncodeScans\_custom.m}, líneas 16 a 22.
+
+\begin{lstlisting}[firstnumber=16]
+    % Contar las frecuencias de luminancia.
+    FREQ_Y_DC = Freq256(Y_DC_CP(:,1));
+    FREQ_Y_AC = Freq256(Y_AC_ZCP(:,1));
+
+    % Contar conjuntamente las frecuencias de Cb y Cr.
+    FREQ_C_DC = Freq256([Cb_DC_CP(:,1); Cr_DC_CP(:,1)]);
+    FREQ_C_AC = Freq256([Cb_AC_ZCP(:,1); Cr_AC_ZCP(:,1)]);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Las líneas 17 y 18 seleccionan solo la primera columna. En DC esa columna
+contiene C; en AC contiene el símbolo combinado ZCdec. La segunda columna P
+no se usa para diseñar Huffman, porque sus bits se emitirán aparte.
+
+Las líneas 21 y 22 concatenan verticalmente los símbolos de Cb y Cr: primero
+los de Cb y después los de Cr. Para un histograma el orden no importa, pero
+sí importa incluir todas las apariciones. Si Cb contiene [0;1;1] y Cr [1;2],
+la frecuencia conjunta de 1 es tres, no la media de los recuentos por plano.
+
+Freq256 recorre los símbolos 0 a 255 y cuenta coincidencias. FREQ(1) cuenta
+el símbolo 0, FREQ(2) el 1, etc. Las posiciones sin apariciones valen cero.
+Los cuatro resultados corresponden a dos familias de símbolos por dos grupos
+de componentes: Y y crominancia conjunta. No se están contando píxeles ni P.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{HSpecTables: diseñar las longitudes y el orden de símbolos}
+
+\textbf{Código real:} \texttt{EncodeScans\_custom.m}, líneas 24 a 30.
+
+\begin{lstlisting}[firstnumber=24]
+    % Generar las especificaciones Huffman de luminancia.
+    [BITS_Y_DC, HUFFVAL_Y_DC] = HSpecTables(FREQ_Y_DC);
+    [BITS_Y_AC, HUFFVAL_Y_AC] = HSpecTables(FREQ_Y_AC);
+
+    % Generar las especificaciones Huffman de crominancia.
+    [BITS_C_DC, HUFFVAL_C_DC] = HSpecTables(FREQ_C_DC);
+    [BITS_C_AC, HUFFVAL_C_AC] = HSpecTables(FREQ_C_AC);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada línea transforma una distribución de frecuencias en un par BITS/HUFFVAL.
+El proceso es independiente para Y\_DC, Y\_AC, C\_DC y C\_AC. Cambiar la imagen
+o caliQ puede cambiar los símbolos y, por tanto, sus tablas.
+
+HSpecTables combina frecuencias pequeñas para obtener longitudes, añade
+temporalmente el símbolo reservado 256 y llama a AdjustBits para limitar
+las longitudes y retirar el punto reservado. HUFFVAL final solo contiene
+símbolos reales de 0 a 255. No es un vector de frecuencias ni de códigos.
+
+BITS(i) dice cuántos símbolos recibirán códigos de i bits. HUFFVAL enumera
+esos símbolos en el orden de asignación: primero los de menor longitud.
+La suma de BITS debe coincidir con la longitud de HUFFVAL. Todavía falta
+calcular los números binarios concretos que utilizará el codificador.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Las cuatro tablas de consulta: analizar el patrón repetido}
+
+\textbf{Código real:} \texttt{EncodeScans\_custom.m}, líneas 32 a 50.
+
+\begin{lstlisting}[firstnumber=32]
+    % Tabla de codificacion DC de luminancia.
+    [HUFFSIZE, HUFFCODE] = HCodeTables(BITS_Y_DC, HUFFVAL_Y_DC);
+    [EHUFCO, EHUFSI] = HCodingTables(HUFFSIZE, HUFFCODE, HUFFVAL_Y_DC);
+    ehuf_Y_DC = [EHUFCO EHUFSI];
+
+    % Tabla de codificacion AC de luminancia.
+    [HUFFSIZE, HUFFCODE] = HCodeTables(BITS_Y_AC, HUFFVAL_Y_AC);
+    [EHUFCO, EHUFSI] = HCodingTables(HUFFSIZE, HUFFCODE, HUFFVAL_Y_AC);
+    ehuf_Y_AC = [EHUFCO EHUFSI];
+
+    % Tabla de codificacion DC de crominancia.
+    [HUFFSIZE, HUFFCODE] = HCodeTables(BITS_C_DC, HUFFVAL_C_DC);
+    [EHUFCO, EHUFSI] = HCodingTables(HUFFSIZE, HUFFCODE, HUFFVAL_C_DC);
+    ehuf_C_DC = [EHUFCO EHUFSI];
+
+    % Tabla de codificacion AC de crominancia.
+    [HUFFSIZE, HUFFCODE] = HCodeTables(BITS_C_AC, HUFFVAL_C_AC);
+    [EHUFCO, EHUFSI] = HCodingTables(HUFFSIZE, HUFFCODE, HUFFVAL_C_AC);
+    ehuf_C_AC = [EHUFCO EHUFSI];
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada grupo de tres instrucciones tiene una función diferente. HCodeTables
+genera HUFFSIZE y HUFFCODE en el orden de HUFFVAL. HUFFSIZE(k) es la longitud
+del código de HUFFVAL(k); HUFFCODE(k), su valor numérico.
+
+HCodingTables reorganiza esos datos para que el índice dependa del símbolo,
+no del orden de asignación. Produce EHUFCO y EHUFSI de 256 posiciones.
+Para un símbolo s, EHUFCO(s+1) es el código y EHUFSI(s+1) su longitud.
+Los corchetes de la tercera instrucción concatenan ambas columnas para
+formar una matriz de 256 por 2, llamada ehuf de esa familia.
+
+Por ejemplo, si al símbolo 7 se le asigna 001, la fila 8 contiene [1 3].
+El 1 no basta para distinguir 1, 01 y 001; el 3 conserva la longitud. Una
+longitud cero corresponde a un símbolo sin código; un código numérico cero
+con longitud positiva sí es válido.
+
+En las líneas 38 a 40 se repite para Y\_AC, en 43 a 45 para C\_DC y en
+48 a 50 para C\_AC. Se reutilizan nombres temporales como HUFFCODE porque
+cada tabla definitiva ya quedó almacenada en su propia variable ehuf.
+Reasignar el temporal no cambia las matrices guardadas anteriormente.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Emitir los tres flujos y devolver resultados}
+
+\textbf{Código real:} \texttt{EncodeScans\_custom.m}, líneas 52 a 63.
+
+\begin{lstlisting}[firstnumber=52]
+    % Codificar luminancia con sus tablas DC y AC.
+    CodedY = EncodeSingleScan( ...
+        YScan, Y_DC_CP, Y_AC_ZCP, ehuf_Y_DC, ehuf_Y_AC);
+
+    % Codificar ambas crominancias con las tablas compartidas.
+    CodedCb = EncodeSingleScan( ...
+        CbScan, Cb_DC_CP, Cb_AC_ZCP, ehuf_C_DC, ehuf_C_AC);
+
+    CodedCr = EncodeSingleScan( ...
+        CrScan, Cr_DC_CP, Cr_AC_ZCP, ehuf_C_DC, ehuf_C_AC);
+
+end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada llamada pasa cinco argumentos: el plano, sus DC preparados, sus AC
+preparados, la tabla DC y la tabla AC. EncodeSingleScan utiliza el plano
+como parte de su interfaz; los valores a emitir se encuentran en las matrices
+recogidas. Las tres salidas son secuencias de caracteres 0 y 1.
+
+Y utiliza ehuf\_Y\_DC y ehuf\_Y\_AC. Cb y Cr utilizan el mismo par ehuf\_C\_DC
+y ehuf\_C\_AC, pero siguen siendo dos flujos separados. Compartir tabla
+significa compartir diccionario, no mezclar componentes en una sola secuencia.
+
+La auxiliar recorre cada bloque, escribe la palabra de su categoría DC,
+los bits de posición cuando corresponden, los símbolos AC y EOB. Los símbolos
+Huffman no codifican por sí solos la amplitud: P completa la información.
+La copia suministrada merece revisar el caso C=0, explicado en el capítulo
+de validación; la intención del formato es no añadir amplitud de longitud cero.
+
+El end de la línea 63 cierra la función. MATLAB vuelve a la llamada del
+programa principal con las once salidas ya asignadas; no hace falta un return
+explícito al final. Las tablas intermedias locales desaparecen al salir.
+
+
+\section{Volver a jcom\_custom: empaquetar y definir el contenedor}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Empaquetar no es volver a comprimir con otro algoritmo}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 37 a 45.
+
+\begin{lstlisting}[firstnumber=37]
+    % PASO 7: empaquetar las secuencias binarias en bytes.
+    [bytesY, ultlY]   = bits2bytes(CodedY);
+    [bytesCb, ultlCb] = bits2bytes(CodedCb);
+    [bytesCr, ultlCr] = bits2bytes(CodedCr);
+
+    % Numero de bytes de cada componente.
+    LY  = numel(bytesY);
+    LCb = numel(bytesCb);
+    LCr = numel(bytesCr);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada llamada a bits2bytes recibe un vector de caracteres y devuelve bytes
+uint8 e indicador ultl. '10110010' se representa como el número 178 en un
+solo byte. Se cambia de representación: no se modifica el significado del flujo.
+
+Si hay 11 bits, se obtiene un byte completo y otro con tres bits válidos
+y cinco ceros de relleno. ultl vale 3. Si hay 16 bits, se obtienen dos bytes
+completos y ultl vale 0. En esta implementación, cero significa que no existe
+grupo residual; no significa que el último byte carezca de datos.
+
+numel cuenta elementos de los vectores de bytes. Como cada elemento uint8
+se guardará en un byte, LY, LCb y LCr son los tamaños de datos de cada componente.
+No incluyen la cabecera ni las tablas, y tampoco son longitudes en bits.
+Se guardan para que el lector sepa dónde termina cada flujo.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Controlar el rango antes de convertir}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 47 a 57.
+
+\begin{lstlisting}[firstnumber=47]
+    % PASO 8: preparar la cabecera y las especificaciones Huffman.
+
+    % Comprobar que los datos generales caben en uint32.
+    campos32 = [m n caliQ TO LY LCb LCr];
+
+    validateattributes(campos32, {'numeric'}, ...
+        {'real', 'finite', 'integer', 'nonnegative', ...
+         '<=', double(intmax('uint32'))});
+
+    % Datos generales de la imagen.
+    cabecera = uint32([m n caliQ TO]);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La línea 50 reúne siete números en un vector fila para revisarlos juntos:
+dimensiones, caliQ, tamaño original y tres longitudes. No es todavía la
+cabecera del archivo: las longitudes se escribirán junto a sus componentes.
+
+validateattributes exige que todos sean reales, finitos, enteros y no negativos.
+El par de entradas \texttt{'<=', double(intmax('uint32'))} impone un máximo
+de 4294967295. intmax obtiene ese límite y double permite trabajar con él
+en el control numérico. Validar antes de convertir evita ocultar un valor
+demasiado grande mediante saturación.
+
+La línea 57 crea la cabecera con solo [m n caliQ TO] y la convierte a uint32.
+El orden de sus cuatro elementos es el contrato de lectura. No se escriben
+mamp ni namp porque se pueden deducir de m y n. Cambiar este orden exige
+cambiar el descompresor de manera compatible.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Celdas: guardar cuatro vectores de tamaños diferentes}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 59 a 63.
+
+\begin{lstlisting}[firstnumber=59]
+    % Agrupar las cuatro especificaciones en un orden fijo:
+    % Y_DC, Y_AC, C_DC, C_AC.
+    tablasBITS = {BITS_Y_DC, BITS_Y_AC, BITS_C_DC, BITS_C_AC};
+    tablasHUFFVAL = {HUFFVAL_Y_DC, HUFFVAL_Y_AC, ...
+                     HUFFVAL_C_DC, HUFFVAL_C_AC};
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Las llaves construyen una celda fila con cuatro contenidos, en el orden
+Y\_DC, Y\_AC, C\_DC, C\_AC. Una celda permite que cada HUFFVAL tenga una
+longitud distinta. Una concatenación numérica normal exigiría dimensiones
+compatibles y perdería la separación explícita entre tablas.
+
+\texttt{tablasBITS\{2\}} devuelve el vector BITS de Y\_AC; en cambio,
+\texttt{tablasBITS(2)} devolvería una celda que contiene ese vector. Las
+auxiliares de suma y escritura necesitan el contenido numérico. Las dos
+celdas están alineadas por índice: BITS y HUFFVAL de la posición k pertenecen
+a la misma familia. No hay nombres de tabla escritos en el archivo.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Normalizar BITS: entender cada línea del bucle}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 65 a 79.
+
+\begin{lstlisting}[firstnumber=65]
+    % Comprobar y completar las especificaciones.
+    for k = 1:4
+        b = tablasBITS{k};
+        b = b(:);  % Asegurar formato columna.
+
+        assert(numel(b) <= 16, ...
+            'BITS no puede superar 16 elementos.');
+
+        % Completar con ceros hasta tener 16 posiciones.
+        b(end+1:16, 1) = 0;
+        tablasBITS{k} = b;
+
+        assert(sum(b) == numel(tablasHUFFVAL{k}), ...
+            'BITS y HUFFVAL no son coherentes.');
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+\textbf{Línea 66.} k toma sucesivamente 1, 2, 3 y 4. Todo el interior se
+ejecuta una vez por tabla. \textbf{Línea 67.} Se extrae su vector en b.
+\textbf{Línea 68.} b(:) coloca todos sus elementos en una columna, conservando
+su orden. No calcula frecuencias ni ordena valores.
+
+\textbf{Líneas 70 y 71.} assert exige una condición verdadera; si es falsa,
+lanza el mensaje. Se permiten hasta 16 posiciones. AdjustBits puede recortar
+su cola, por lo que exigir exactamente 16 antes de completar provocó el
+primer error del desarrollo.
+
+\textbf{Línea 74.} Dentro del índice, end representa la última fila actual.
+Si b tiene 10 elementos, end+1:16 es 11:16. Se asigna cero a esas filas de
+la columna 1. Si ya tiene 16, el intervalo 17:16 está vacío y no añade nada.
+Se afirma que no existen códigos de las longitudes ausentes; no se crean
+símbolos. \textbf{Línea 75.} Se devuelve la copia normalizada a su celda.
+
+\textbf{Líneas 77 y 78.} sum(b) cuenta todas las palabras declaradas, mientras
+numel(HUFFVAL) cuenta sus símbolos. Deben ser iguales. \textbf{Línea 79.}
+Este end cierra el for, no la función. Las tablas ya codificadas con el BITS
+corto conservan los mismos códigos que con esta cola de ceros.
+
+
+\section{Escribir bytes con un contrato verificable}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Abrir la salida y detectar un fallo de apertura}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 82 a 87.
+
+\begin{lstlisting}[firstnumber=82]
+    % PASO 9: escribir el archivo comprimido.
+    fid = fopen(archivo, 'wb', 'ieee-le');
+
+    if fid == -1
+        error('No se ha podido crear el archivo comprimido.');
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+fopen devuelve un número identificador, fid, que las siguientes funciones
+utilizan para referirse al archivo abierto. No contiene los bytes ni su tamaño.
+El texto wb indica escritura binaria; ieee-le fija little-endian para campos
+de más de un byte. Si el archivo existía, puede truncarse al abrirlo.
+
+La comparación fid==-1 detecta que no se pudo abrir. error interrumpe la
+función; no se intenta seguir escribiendo con un identificador inválido.
+El end de la línea 87 cierra solamente ese if. Los errores de escritura
+posteriores se controlan con el try/catch del siguiente bloque.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Calcular el tamaño esperado antes de escribir}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 89 a 97.
+
+\begin{lstlisting}[firstnumber=89]
+    % Tamano esperado: cabecera, tablas y componentes.
+    % Cabecera: 16 bytes.
+    % Cuatro BITS: 4 * 16 * 2 = 128 bytes.
+    % Longitud e indicador por componente: 3 * (4 + 1) = 15 bytes.
+    TCprevisto = 16 + 128 + 15 + LY + LCb + LCr;
+
+    for k = 1:4
+        TCprevisto = TCprevisto + numel(tablasHUFFVAL{k});
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Los 16 bytes de cabecera salen de cuatro uint32. Los 128 bytes de BITS son
+cuatro tablas por 16 recuentos por dos bytes. Los 15 bytes adicionales son
+tres longitudes uint32 de cuatro bytes más tres indicadores de un byte.
+A eso se añaden LY, LCb y LCr, que ya representan datos empaquetados.
+
+La primera asignación suma las partes fijas y los flujos. El bucle añade
+numel(HUFFVAL) para cada tabla: un byte por símbolo. Esos tamaños son variables,
+por lo que no se pueden sustituir siempre por 256. Si las cuatro tablas
+tuvieran 4, 20, 3 y 12 símbolos, añadirían 39 bytes.
+
+TCprevisto se mide en bytes. No se reserva memoria del archivo mediante esta
+fórmula ni se escribe ese total como un campo: se conserva en memoria para
+comprobar la escritura y el tamaño real al terminar.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Escribir cabecera y especificaciones}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 99 a 110.
+
+\begin{lstlisting}[firstnumber=99]
+    try
+        % Datos generales: m, n, caliQ y TO.
+        escritos = 4 * fwrite(fid, cabecera, 'uint32');
+
+        % Especificaciones Huffman: Y_DC, Y_AC, C_DC, C_AC.
+        for k = 1:4
+            escritos = escritos + ...
+                2 * fwrite(fid, uint16(tablasBITS{k}), 'uint16');
+
+            escritos = escritos + ...
+                fwrite(fid, uint8(tablasHUFFVAL{k}), 'uint8');
+        end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+try inicia el bloque protegido. La línea 101 escribe cuatro valores de la
+cabecera como uint32. fwrite devuelve la cantidad de elementos efectivamente
+escritos; si son cuatro, multiplicar por cuatro da 16 bytes. escritos nace
+con ese recuento. No se escribe la propia variable escritos en el archivo.
+
+El for vuelve a seguir el orden de las cuatro tablas. Para cada una,
+uint16 convierte sus recuentos y fwrite solicita esa precisión de salida.
+El recuento devuelto se multiplica por dos. Después uint8 convierte HUFFVAL
+y fwrite lo guarda: un elemento coincide con un byte. Los puntos suspensivos
+continúan cada asignación de suma en la siguiente línea.
+
+La forma \texttt{escritos = escritos + ...} actualiza un acumulador: el nuevo
+valor es lo ya contabilizado más lo que acaba de escribirse. Se alternan BITS
+y HUFFVAL de una tabla antes de pasar a la siguiente. No se escriben primero
+todos los BITS y luego todos los HUFFVAL; el lector debe respetar esta alternancia.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Escribir Y, Cb y Cr sin confundir sus límites}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 112 a 125.
+
+\begin{lstlisting}[firstnumber=112]
+        % Componente Y.
+        escritos = escritos + 4 * fwrite(fid, uint32(LY), 'uint32');
+        escritos = escritos + fwrite(fid, uint8(ultlY), 'uint8');
+        escritos = escritos + fwrite(fid, bytesY, 'uint8');
+
+        % Componente Cb.
+        escritos = escritos + 4 * fwrite(fid, uint32(LCb), 'uint32');
+        escritos = escritos + fwrite(fid, uint8(ultlCb), 'uint8');
+        escritos = escritos + fwrite(fid, bytesCb, 'uint8');
+
+        % Componente Cr.
+        escritos = escritos + 4 * fwrite(fid, uint32(LCr), 'uint32');
+        escritos = escritos + fwrite(fid, uint8(ultlCr), 'uint8');
+        escritos = escritos + fwrite(fid, bytesCr, 'uint8');
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada componente se escribe con tres instrucciones. La primera guarda su
+cantidad de bytes como un único uint32 y suma cuatro bytes al acumulador.
+La segunda guarda ultl como uint8 y suma un byte. La tercera guarda todos
+los valores de su vector uint8 y suma cuantos haya escrito.
+
+Así, Y ocupa 5+LY bytes; Cb, 5+LCb; Cr, 5+LCr. Sus tres indicadores no se
+guardan juntos al principio: cada uno está junto a la longitud de su plano.
+Las líneas 118 a 120 repiten el patrón para Cb y 123 a 125 para Cr. Usar
+accidentalmente LY al escribir Cb produciría un contrato erróneo aunque los
+bytes individuales fuesen válidos.
+
+uint32(LY) y uint8(ultlY) especifican los valores a serializar; el último
+argumento de fwrite indica cómo se escribirán. Aquí se hacen explícitas ambas
+cosas. Los flujos ya son uint8 y no necesitan una nueva conversión.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Control de escritura y ruta de error}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 127 a 135.
+
+\begin{lstlisting}[firstnumber=127]
+        % Comprobar que se han escrito todos los bytes.
+        if escritos ~= TCprevisto
+            error('La escritura del archivo ha quedado incompleta.');
+        end
+
+    catch fallo
+        fclose(fid);
+        rethrow(fallo);
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+El if compara el acumulador con el tamaño esperado. El operador distinto
+no significa que las imágenes difieran; compara dos tamaños de archivo.
+Si se ha escrito menos o más de lo previsto, error genera una excepción.
+
+catch fallo captura los errores que se produzcan dentro de try, incluidos
+los lanzados por ese if. fallo es un objeto con información del error.
+fclose libera el descriptor y rethrow(fallo) vuelve a lanzar el mismo error
+para que se vea su causa. No convierte un fallo en un resultado correcto.
+El end de la línea 135 termina try/catch; en el camino de error no se avanza
+normalmente al cálculo de RC.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Cerrar correctamente en el camino normal}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 137 a 141.
+
+\begin{lstlisting}[firstnumber=137]
+    estado = fclose(fid);
+
+    if estado ~= 0
+        error('No se ha podido cerrar correctamente el archivo.');
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Si no se ha producido ningún error en try, se llega a esta llamada a fclose.
+Su valor de retorno se guarda en estado: cero indica cierre correcto.
+La comparación estado distinto de cero provoca un error si el cierre falla.
+
+No se está cerrando normalmente dos veces: el cierre del catch solo se
+ejecuta cuando hay una excepción y rethrow abandona esa ruta. Cerrar antes
+de medir permite finalizar la escritura pendiente. TO es el tamaño original;
+todavía falta consultar el tamaño del nuevo archivo completo.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Medir TC, devolver RC y terminar}
+
+\textbf{Código real:} \texttt{jcom\_custom.m}, líneas 143 a 155.
+
+\begin{lstlisting}[firstnumber=143]
+    % PASO 10: medir el archivo comprimido y calcular RC.
+    infoComprimido = dir(archivo);
+    TC = infoComprimido.bytes;
+
+    % Comprobar el tamano real del archivo.
+    if TC ~= TCprevisto
+        error('El tamano del archivo no coincide con el previsto.');
+    end
+
+    % Porcentaje de espacio ahorrado.
+    RC = 100 * (TO - TC) / TO;
+
+end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+dir consulta ahora el archivo de salida. Su campo bytes se guarda en TC.
+Se contrasta ese tamaño real con TCprevisto; el recuento de fwrite y la
+medición posterior son comprobaciones relacionadas pero diferentes.
+
+La fórmula calcula el ahorro respecto a TO. Si TO=1000 y TC=400,
+RC=60. Si TC=1200, RC=-20: el resultado ha crecido un 20 por ciento.
+No se toma el tamaño de Xlab ni la longitud de los caracteres binarios.
+En el valor final se incluye el coste de las tablas y los metadatos.
+
+La asignación a RC deja preparada la salida declarada en la primera línea.
+El end final cierra la función y devuelve el control al llamador. El archivo
+queda en disco, aunque las variables locales desaparezcan.
+
+
+\section{Seguir una ejecución sin perderse entre funciones}
+
+Para estudiar, escribe tres columnas en papel: variable, representación y
+función que la crea. Antes de EncodeScans\_custom tienes etiquetas; al volver,
+tienes caracteres binarios y especificaciones. Antes de fwrite tienes valores
+numéricos en memoria; después existe una representación binaria en disco.
+
+Una lectura correcta del compresor en voz alta sería: ``Valido entradas y
+mido el original; preparo la imagen; transformo y cuantizo; permuto los bloques;
+obtengo símbolos y sus frecuencias; construyo códigos; represento los símbolos
+con códigos y amplitudes; empaqueto; guardo la información necesaria para
+invertir esa representación; finalmente mido y calculo el ahorro''.
+
+Comprueba que puedes explicar por qué caliQ se usa antes de contar frecuencias:
+cambiar la cuantización cambia las etiquetas, sus rachas y las categorías.
+Por eso las tablas a medida dependen de la imagen y de la cuantización,
+no solamente del nombre del archivo.
+
+\chapter{El contrato binario del archivo .huc}
+\section{Campos, tipos y orden}
+
+El formato se interpreta por posición: no se escriben los nombres de variables
+ni separadores de texto. Compresor y descompresor deben compartir el contrato.
+\begin{center}\begin{tabular}{p{.24\textwidth}p{.27\textwidth}p{.35\textwidth}}
+\toprule Campo & Tipo y tamaño & Interpretación\\\midrule
+m, n, caliQ, TO & 4 uint32; 16 bytes & Datos generales\\
+BITS Y\_DC & 16 uint16; 32 bytes & Recuentos por longitud\\
+HUFFVAL Y\_DC & $N_1$ uint8 & Símbolos, $N_1=\sum BITS$\\
+BITS/HUFFVAL Y\_AC & 32+$N_2$ bytes & Segunda especificación\\
+BITS/HUFFVAL C\_DC & 32+$N_3$ bytes & Tercera especificación\\
+BITS/HUFFVAL C\_AC & 32+$N_4$ bytes & Cuarta especificación\\
+LY, ultlY, bytesY & uint32, uint8, LY uint8 & Flujo de Y\\
+LCb, ultlCb, bytesCb & Igual estructura & Flujo de Cb\\
+LCr, ultlCr, bytesCr & Igual estructura & Flujo de Cr\\\bottomrule
+\end{tabular}\end{center}
+El primer BITS comienza en el desplazamiento 16, contando el inicio del archivo
+como cero. El primer HUFFVAL comienza en el 48. A partir de ahí los desplazamientos
+dependen del número de símbolos de cada tabla. Por eso el lector obtiene primero
+BITS y luego lee exactamente su suma de símbolos.
+
+
+\section{Por qué se eligieron esos tipos}
+
+Los símbolos van de 0 a 255: caben en uint8. BITS se guarda en uint16 para
+admitir recuentos de hasta 256. Las dimensiones y longitudes pueden superar
+255 e incluso 65535; se usa uint32. Los indicadores ultl solo necesitan 0 a 7.
+El formato usa bytes enteros aunque algunos rangos podrían codificarse con menos bits:
+es una elección de simplicidad, no un mínimo teórico.
+
+Little-endian significa que un entero multibyte guarda primero el byte menos
+significativo. Por ejemplo, uint16(258) se escribe como 02 01 en hexadecimal.
+No significa invertir los bits de los códigos Huffman. El orden de bytes de
+los campos y el orden de los caracteres del flujo son asuntos distintos.
+
+
+\section{Tamaño total y límites del formato}
+
+Si $N_k$ es la cantidad de símbolos de la tabla k, el tamaño esperado es
+\[
+TC=159+\sum_{k=1}^{4}N_k+L_Y+L_{Cb}+L_{Cr}.
+\]
+Los 159 bytes fijos son $16+128+15$: cabecera, cuatro BITS y tres parejas
+longitud/indicador. Los HUFFVAL y los flujos tienen tamaño variable.
+
+No se guardan ni X, ni frecuencias, ni árbol Huffman, ni nombre del original.
+Las dimensiones ampliadas se deducen de m y n. TO permite RC, y caliQ permite
+reconstruir los escalones de cuantización. No hay firma, versión ni suma de
+comprobación. Las validaciones detectan varias inconsistencias, pero no toda
+corrupción posible: un archivo arbitrario no queda validado solo por su extensión.
+
+
+\chapter{Descompresión: entender cada instrucción}
+
+El descompresor trabaja primero con un archivo de bytes y termina con una
+matriz RGB. Su primera mitad interpreta un formato; su segunda mitad reconstruye
+la imagen; al final evalúa. Separar mentalmente estas tres responsabilidades
+ayuda a no confundir leer bytes, decodificar Huffman y aplicar DCT inversa.
+
+Los fragmentos siguientes recorren todo el archivo principal y toda la auxiliar
+DecodeScans\_custom. Cuando una secuencia se repite para Cb y Cr se explica
+qué conserva y qué cambia. Los números corresponden a las líneas reales
+del código reproducido en los apéndices.
+
+\section{Entrada, salida y referencia para evaluar}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Qué recibe y qué devuelve jdes\_custom}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 1 a 16.
+
+\begin{lstlisting}[firstnumber=1]
+function [MSE, RC] = jdes_custom(fname)
+    % Descomprime un archivo .huc con tablas Huffman a medida.
+    % fname: nombre del archivo comprimido.
+    % MSE: error cuadratico medio de la reconstruccion.
+    % RC: porcentaje de espacio ahorrado.
+
+    % PASO 1: comprobar el archivo y obtener su tamano.
+    if ~isfile(fname)
+        error('No se encuentra el archivo comprimido.');
+    end
+
+    info = dir(fname);
+    TC = info.bytes;
+
+    % Nombre de la imagen que se guardara al descomprimir.
+    archivoSalida = 'comprimido_des_cus.bmp';
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La función declara dos resultados: primero MSE y después RC. Por ejemplo:
+\begin{quote}\small\ttfamily [e,r]=jdes\_custom('comprimido.huc')\end{quote}
+e recibirá MSE y r recibirá RC.
+fname identifica el comprimido, no el BMP original. La función también
+guardará una imagen BMP como efecto de la ejecución.
+
+En la línea 8, isfile pregunta si existe un archivo y el tilde delante niega
+la respuesta. Si no existe, error detiene el proceso antes de leer nada.
+El end cierra ese control. dir devuelve la información del comprimido;
+TC=info.bytes conserva su tamaño real para RC y para los límites de lectura.
+
+archivoSalida solo contiene el nombre del futuro BMP. Aún no se ha creado.
+Tampoco se ha calculado MSE ni RC: son salidas que se asignarán cuando existan
+los datos necesarios. El nombre fijo puede sobrescribir una reconstrucción previa.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Pedir el original: lectura de texto y comprobación}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 18 a 24.
+
+\begin{lstlisting}[firstnumber=18]
+    % PASO 2: obtener la imagen original para la comparacion.
+    nombreOriginal = input( ...
+        'Introduce el nombre de la imagen original: ', 's');
+
+    if ~isfile(nombreOriginal)
+        error('No se encuentra la imagen original.');
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+input muestra la pregunta y espera una respuesta. Su segundo argumento s
+indica que se quiere texto, sin evaluar lo escrito como una instrucción MATLAB.
+Por eso el usuario puede escribir Img00.bmp sin comillas en esa pregunta.
+El texto queda en nombreOriginal.
+
+Se utiliza de nuevo isfile con negación: si la ruta no existe, se lanza error.
+La petición del original es una decisión de evaluación, no un requisito de
+Huffman. El .huc ya contiene los datos para reconstruir la imagen. La referencia
+original se necesita para comparar, calcular MSE y mostrar ambas imágenes.
+El código no guarda su nombre dentro del contenedor.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Recibir solo las salidas que hacen falta}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 26 a 31.
+
+\begin{lstlisting}[firstnumber=26]
+    % Leer la imagen original en RGB.
+    [X, ~, ~, mOriginal, nOriginal] = imlee(nombreOriginal);
+
+    if size(X, 3) ~= 3 || ~isa(X, 'uint8')
+        error('La imagen original debe estar en RGB de 8 bits.');
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+imlee convierte la referencia a RGB si es necesario y entrega X como primera
+salida. Los dos tildes siguientes descartan Xamp y tipo; mOriginal y nOriginal
+recogen la cuarta y quinta salida. Pedir menos salidas no modifica el orden
+de las restantes ni convierte mOriginal en una dimensión ampliada.
+
+La condición de la línea 29 combina dos motivos de error mediante OR lógico
+de cortocircuito, escrito con dos barras verticales: que el tamaño de la
+dimensión 3 no sea tres, o que X no sea uint8. Si cualquiera es verdadero,
+se detiene. size(X,3) devuelve el número de canales e isa consulta la clase.
+
+X no se envía a DecodeScans\_custom. Se conserva en jdes\_custom para evaluar
+al final. Seleccionar otra imagen del mismo tamaño superaría el control de
+dimensiones, pero produciría una comparación equivocada: el usuario debe
+indicar la referencia correcta.
+
+
+\section{Abrir el archivo y entender la lectura binaria}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Descriptor y cierre automático}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 33 a 42.
+
+\begin{lstlisting}[firstnumber=33]
+    % PASO 3: abrir el archivo y leer la cabecera.
+    fid = fopen(fname, 'rb', 'ieee-le');
+
+    if fid == -1
+        error('No se ha podido abrir el archivo comprimido.');
+    end
+
+    % Cerrar automaticamente el archivo al terminar la funcion,
+    % incluso si ocurre un error.
+    cierreArchivo = onCleanup(@() fclose(fid));
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+fopen usa rb para leer bytes y ieee-le para interpretar los campos multibyte
+en el mismo orden del escritor. fid identifica el archivo abierto. -1 indica
+fallo de apertura; si aparece, error detiene la función y no se sigue leyendo.
+
+La expresión \texttt{@() fclose(fid)} crea una función anónima sin argumentos.
+No cierra el archivo al escribir esa expresión: define la acción que debe
+ejecutarse después. onCleanup guarda esa acción en un objeto y la ejecuta
+cuando ese objeto se destruye.
+
+Si se abandona la función por un error, las variables locales se liberan
+y el objeto cierra el archivo. En el camino correcto se destruye explícitamente
+con clear cierreArchivo después de terminar la lectura. Esta estrategia
+evita repetir try/catch en cada operación. No debe añadirse otro fclose
+independiente que cierre el mismo descriptor antes de seguir leyendo.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Leer cuatro elementos, no cuatro bytes}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 44 a 49.
+
+\begin{lstlisting}[firstnumber=44]
+    % Leer los cuatro valores uint32 de la cabecera.
+    datos = fread(fid, 4, '*uint32');
+
+    if numel(datos) ~= 4
+        error('La cabecera del archivo .huc esta incompleta.');
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+fread recibe fid, la cantidad 4 y la precisión *uint32. Se solicitan cuatro
+elementos de cuatro bytes: en total 16 bytes. El asterisco hace que el
+resultado se conserve como uint32, en vez de entregarse por defecto como double.
+El resultado datos es un vector columna en el orden de lectura.
+
+fread avanza la posición del archivo. Después de una lectura completa queda
+en el desplazamiento 16, donde empieza BITS de Y\_DC. No hay separadores
+ni nombres de campos que el lector pueda buscar: el orden define el significado.
+
+numel(datos) verifica que realmente llegaron cuatro elementos. Si el archivo
+está truncado, fread puede devolver menos sin que por sí solo detenga el programa.
+El control evita acceder a datos(4) cuando no existe. El end termina el if.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Asignar significado a cada posición y validar}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 51 a 60.
+
+\begin{lstlisting}[firstnumber=51]
+    % Convertir a double para los calculos posteriores.
+    m     = double(datos(1));
+    n     = double(datos(2));
+    caliQ = double(datos(3));
+    TO    = double(datos(4));
+
+    if any([m n caliQ TO] == 0)
+        error('La cabecera contiene valores no validos.');
+    end
+
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada asignación extrae un elemento del vector: m es altura, n anchura,
+caliQ factor de cuantización y TO tamaño original. double cambia el tipo
+numérico para los cálculos, no el valor de estos uint32. Los enteros de
+uint32 caben exactamente en double, por lo que aquí no se pierde precisión.
+
+\texttt{[m n caliQ TO]==0} produce cuatro valores lógicos. any devuelve
+verdadero si al menos uno lo es. Por tanto, se rechaza que cualquiera de
+los cuatro datos sea cero. Los negativos ya eran imposibles al leer uint32.
+Este control detecta algunos valores no válidos, pero no garantiza que toda
+cabecera arbitraria represente una imagen razonable.
+
+El TO leído no se calcula a partir de la referencia seleccionada: es el
+tamaño que el compresor guardó cuando creó el archivo. Así ambos calculan RC
+con el mismo dato de origen. caliQ se utilizará en la descuantización,
+no para diseñar de nuevo Huffman.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Reconstruir tamaños ampliados y contrastar la referencia}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 61 a 68.
+
+\begin{lstlisting}[firstnumber=61]
+    % Recuperar las dimensiones ampliadas.
+    mamp = 8 * ceil(m / 8);
+    namp = 8 * ceil(n / 8);
+
+    % Comprobar las dimensiones de la imagen de referencia.
+    if mOriginal ~= m || nOriginal ~= n
+        error('La imagen original no coincide en dimensiones.');
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+ceil redondea hacia arriba. Dividir m entre ocho, aplicar ceil y multiplicar
+por ocho obtiene el menor múltiplo de ocho que no es menor que m. Si m=13,
+sale 16; si m=16, se mantiene. Se repite para n. Estas dimensiones determinan
+el tamaño de los planos y el número de bloques que se decodificarán.
+
+El OR lógico de la línea 66 detecta que la altura o la anchura de la referencia
+no coincida con la cabecera. Basta una diferencia para lanzar error.
+No se compara aquí el contenido de X. El control evita un MSE entre matrices
+de distinta forma, pero la identidad del original depende de la elección del usuario.
+
+
+\section{Leer las cuatro tablas sin perder la posición del archivo}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Reservar celdas y comenzar el bucle}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 70 a 75.
+
+\begin{lstlisting}[firstnumber=70]
+    % PASO 4: leer las cuatro especificaciones Huffman.
+    % Orden: Y_DC, Y_AC, C_DC, C_AC.
+    tablasBITS = cell(1, 4);
+    tablasHUFFVAL = cell(1, 4);
+
+    for k = 1:4
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+cell(1,4) crea una fila de cuatro celdas inicialmente vacías. Una guardará
+los cuatro vectores BITS y otra los HUFFVAL, de longitudes variables.
+No reserva cuatro veces 256 símbolos ni lee nada por sí misma.
+
+El bucle k=1:4 determina la identidad de cada pareja: 1 es Y\_DC, 2 Y\_AC,
+3 C\_DC y 4 C\_AC. Como el archivo no contiene etiquetas de texto, cambiar
+ese orden asignaría códigos incorrectos aunque todas las lecturas devolvieran bytes.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Leer BITS y averiguar cuántos símbolos vienen después}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 76 a 90.
+
+\begin{lstlisting}[firstnumber=76]
+        % Cada BITS contiene 16 valores uint16.
+        b = fread(fid, 16, '*uint16');
+
+        if numel(b) ~= 16
+            error('Lectura incompleta de BITS en la tabla %d.', k);
+        end
+
+        b = double(b);
+
+        % La suma de BITS indica cuantos simbolos leer.
+        cantidadSimbolos = sum(b);
+
+        if cantidadSimbolos < 1 || cantidadSimbolos > 256
+            error('Cantidad de simbolos no valida en la tabla %d.', k);
+        end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+fread solicita 16 elementos uint16, equivalentes a 32 bytes. Como el escritor
+completó BITS con ceros, siempre debe existir esa cantidad. El control numel
+detecta lectura incompleta; el texto del error incorpora k mediante \%d,
+que es un marcador para un entero dentro de ese mensaje.
+
+b=double(b) prepara el vector para sum y las auxiliares. cantidadSimbolos=sum(b)
+suma códigos de todas las longitudes. Si b=[0;2;2;0;...] significa que deben
+aparecer cuatro símbolos de HUFFVAL a continuación. No significa que haya
+cuatro bits de datos ni que todas las palabras midan cuatro.
+
+La condición comprueba un límite inferior y otro superior: se necesitan
+entre uno y 256 símbolos. En una imagen no vacía cada familia genera datos;
+un HUFFVAL vacío no es una tabla útil en este contrato. El OR permite rechazar
+cualquiera de los dos extremos fuera del rango.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Leer HUFFVAL, descartar duplicados y almacenar}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 92 a 107.
+
+\begin{lstlisting}[firstnumber=92]
+        % Cada simbolo de HUFFVAL ocupa un uint8.
+        h = fread(fid, cantidadSimbolos, '*uint8');
+
+        if numel(h) ~= cantidadSimbolos
+            error('Lectura incompleta de HUFFVAL en la tabla %d.', k);
+        end
+
+        h = double(h);
+
+        if numel(unique(h)) ~= cantidadSimbolos
+            error('HUFFVAL contiene simbolos repetidos en la tabla %d.', k);
+        end
+
+        tablasBITS{k} = b;
+        tablasHUFFVAL{k} = h;
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Ahora fread lee cantidadSimbolos elementos uint8: un byte por símbolo. La
+posición avanza justo hasta el comienzo del siguiente BITS. No es necesario
+guardar un campo adicional con la longitud de HUFFVAL, porque se acaba de
+deducir de BITS.
+
+numel comprueba que se haya leído todo. Tras convertir h a double, unique(h)
+produce sus valores distintos. Si esa cantidad es menor que cantidadSimbolos,
+existe un símbolo repetido y el archivo se rechaza. Por ejemplo, [2;5;2]
+solo tiene dos valores distintos y fallaría. Esto no es una comprobación
+completa de todas las propiedades de un código prefijo.
+
+Las asignaciones con llaves guardan el vector numérico en la celda k.
+El end de la línea 107 cierra el for y repite el proceso hasta completar
+las cuatro parejas. Se reutilizan b y h como temporales, conservando cada
+resultado en su celda antes de pasar a la siguiente tabla.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Recuperar nombres explícitos para la interfaz}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 109 a 120.
+
+\begin{lstlisting}[firstnumber=109]
+    % Identificar las especificaciones de cada tabla.
+    BITS_Y_DC = tablasBITS{1};
+    HUFFVAL_Y_DC = tablasHUFFVAL{1};
+
+    BITS_Y_AC = tablasBITS{2};
+    HUFFVAL_Y_AC = tablasHUFFVAL{2};
+
+    BITS_C_DC = tablasBITS{3};
+    HUFFVAL_C_DC = tablasHUFFVAL{3};
+
+    BITS_C_AC = tablasBITS{4};
+    HUFFVAL_C_AC = tablasHUFFVAL{4};
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Estas ocho asignaciones no recalculan ninguna tabla. Extraen los contenidos
+de las celdas y los asocian a nombres legibles que coinciden con los argumentos
+de DecodeScans\_custom. La posición 1 contiene Y\_DC; la 2 Y\_AC; la 3 C\_DC;
+la 4 C\_AC. Cada BITS se mantiene emparejado con su HUFFVAL.
+
+La utilidad es hacer visible qué familia se pasa en cada llamada. Si se
+intercambiara HUFFVAL\_Y\_DC con el de AC, las matrices seguirían siendo
+numéricas, pero los bits recuperarían símbolos equivocados. La compatibilidad
+de dimensiones no garantiza compatibilidad de significado.
+
+
+\section{Leer las componentes: tamaño, indicador y datos}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Preparar el bucle común para Y, Cb y Cr}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 123 a 129.
+
+\begin{lstlisting}[firstnumber=123]
+    % PASO 5: leer las tres componentes comprimidas.
+    nombres = {'Y', 'Cb', 'Cr'};
+    bytesComponentes = cell(1, 3);
+    longitudes = zeros(1, 3);
+    indicadores = zeros(1, 3);
+
+    for k = 1:3
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+nombres es una celda con tres textos y se usa en mensajes de error.
+bytesComponentes será otra celda, porque los tres flujos pueden ocupar
+distintas cantidades de bytes. longitudes e indicadores son vectores fila
+de tres ceros, creados con zeros(1,3), que después recibirán los valores leídos.
+
+El for recorre primero Y, después Cb y después Cr. No se utiliza un bucle
+de cuatro porque estas son componentes, no familias de tablas Huffman.
+Hay tres flujos y cuatro tablas: son dos cantidades diferentes por diseño.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Leer la longitud y ultl antes del vector}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 130 a 145.
+
+\begin{lstlisting}[firstnumber=130]
+        % Leer la cantidad de bytes de la componente.
+        longitud = fread(fid, 1, '*uint32');
+
+        if isempty(longitud)
+            error('No se ha podido leer la longitud de %s.', nombres{k});
+        end
+
+        % Leer el indicador del ultimo byte.
+        ultl = fread(fid, 1, '*uint8');
+
+        if isempty(ultl)
+            error('No se ha podido leer ultl de %s.', nombres{k});
+        end
+
+        longitud = double(longitud);
+        ultl = double(ultl);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La primera llamada solicita un elemento uint32: la longitud del flujo en
+bytes. Si no hay un elemento completo, isempty detecta la ausencia y se
+lanza error. El marcador \%s del mensaje se sustituye por nombres\{k\},
+el texto de la componente actual.
+
+La segunda lectura solicita un uint8 con ultl. Se comprueba también que
+exista. El orden importa: si primero se interpretara la longitud como un
+byte, la posición del lector quedaría desplazada y todo lo posterior fallaría.
+Se convierten ambos escalares a double para compararlos y usarlos en cálculos.
+
+Por ejemplo, si se escribieron LY=2000 y ultlY=3, se leen cuatro bytes que
+forman el número 2000, después un byte con el número 3 y, más adelante,
+exactamente 2000 bytes de datos. No se leen 2000 bits.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Comprobar el indicador y que la longitud sea posible}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 147 a 153.
+
+\begin{lstlisting}[firstnumber=147]
+        if ultl > 7
+            error('Indicador ultl no valido en %s.', nombres{k});
+        end
+
+        if longitud == 0 || longitud > TC - ftell(fid)
+            error('Longitud no valida en %s.', nombres{k});
+        end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+ultl debe estar entre cero y siete. Ya se leyó como uint8, por lo que no
+puede ser negativo; la condición solo necesita rechazar valores mayores que siete.
+Cero significa bytes completos, no ausencia de datos.
+
+ftell(fid) devuelve cuántos bytes se han recorrido desde el inicio. TC menos
+esa posición da los que quedan. Si la longitud declara más datos que los
+restantes, el archivo es inconsistente. También se rechaza longitud cero,
+porque este contrato espera un flujo no vacío por componente.
+
+Este control se aplica antes de pedir el vector para no aceptar una lectura
+de tamaño imposible. No demuestra todavía que los bytes contengan códigos
+Huffman válidos; solo revisa un límite estructural.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Leer los bytes y conservar los tres resultados}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 155 a 165.
+
+\begin{lstlisting}[firstnumber=155]
+        % Leer los bytes empaquetados.
+        bytes = fread(fid, longitud, '*uint8');
+
+        if numel(bytes) ~= longitud
+            error('Lectura incompleta de %s.', nombres{k});
+        end
+
+        longitudes(k) = longitud;
+        indicadores(k) = ultl;
+        bytesComponentes{k} = bytes;
+    end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+fread solicita longitud elementos uint8 y devuelve un vector columna.
+numel(bytes) contrasta la cantidad real con la anunciada. Solo después de
+superar la comprobación se guarda la longitud en la posición k de su vector,
+el indicador en la misma posición y los bytes en la celda k.
+
+Aunque la variable temporal se llame bytes para las tres iteraciones,
+cada vector anterior queda conservado en bytesComponentes. El end cierra
+el bucle: a continuación se dispone de toda la información de los tres planos,
+no solo de la última componente.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Extraer variables y terminar la lectura}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 167 a 186.
+
+\begin{lstlisting}[firstnumber=167]
+    % Recuperar las variables de cada componente.
+    LY  = longitudes(1);
+    LCb = longitudes(2);
+    LCr = longitudes(3);
+
+    ultlY  = indicadores(1);
+    ultlCb = indicadores(2);
+    ultlCr = indicadores(3);
+
+    bytesY  = bytesComponentes{1};
+    bytesCb = bytesComponentes{2};
+    bytesCr = bytesComponentes{3};
+
+    % Debemos haber consumido exactamente todo el archivo.
+    if ftell(fid) ~= TC
+        error('El archivo contiene datos adicionales no previstos.');
+    end
+
+    % Cerrar ahora el archivo mediante el objeto onCleanup.
+    clear cierreArchivo
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Las tres primeras asignaciones recuperan las longitudes con paréntesis,
+porque longitudes es un vector numérico. Las tres siguientes hacen lo mismo
+con indicadores. Los vectores de bytes se extraen con llaves, porque están
+en una celda. Ninguna de estas líneas vuelve a leer el archivo.
+
+Se exige que ftell coincida con TC: después de consumir las tres componentes
+no debe quedar una cola sin interpretar. Si sobra contenido, error detiene
+la función; el objeto onCleanup cerrará el descriptor durante la salida por error.
+
+En el camino correcto, clear cierreArchivo destruye el objeto y ejecuta
+fclose. No borra bytesY, las tablas ni el archivo de disco. Solo libera el
+recurso de lectura que ya no hace falta. A partir de aquí se trabaja con
+los datos guardados en memoria.
+
+
+\section{Recuperar los bits y decodificar las etiquetas}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{bytes2bits: recuperar exactamente la secuencia anterior}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 188 a 191.
+
+\begin{lstlisting}[firstnumber=188]
+    % PASO 6: recuperar las secuencias binarias.
+    CodedY  = bytes2bits(bytesY, ultlY);
+    CodedCb = bytes2bits(bytesCb, ultlCb);
+    CodedCr = bytes2bits(bytesCr, ultlCr);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada llamada recibe los bytes de una componente y su propio indicador.
+La auxiliar usa dec2bin con ancho ocho para conservar los ceros iniciales
+de cada byte, concatena por filas y recorta el último grupo solo cuando
+ultl es positivo. Por ejemplo, el byte 5 produce 00000101, no solo 101.
+
+Si el último byte es 10100000 y ultl=3, se conservan 101. Si ultl=0, se
+conservan los ocho bits de todos los bytes. Eliminar todos los ceros finales
+sería incorrecto porque pueden pertenecer a códigos o amplitudes reales.
+
+CodedY, CodedCb y CodedCr son caracteres binarios. Todavía no contienen
+etiquetas, coeficientes o píxeles. El empaquetado ya se ha invertido; ahora
+falta interpretar los códigos con el diccionario adecuado.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Llamar a la auxiliar con el tamaño y las tablas correctos}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 193 a 197.
+
+\begin{lstlisting}[firstnumber=193]
+    % PASO 8: decodificar con las tablas Huffman a medida.
+    XScanrec = DecodeScans_custom( ...
+        CodedY, CodedCb, CodedCr, [mamp namp], ...
+        BITS_Y_DC, HUFFVAL_Y_DC, BITS_Y_AC, HUFFVAL_Y_AC, ...
+        BITS_C_DC, HUFFVAL_C_DC, BITS_C_AC, HUFFVAL_C_AC);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La llamada pasa doce argumentos: tres secuencias, un vector de dos dimensiones
+y los ocho vectores BITS/HUFFVAL. [mamp namp] es una concatenación de dos
+escalares y define la forma que tendrá cada plano decodificado.
+
+Las tablas no se generan de nuevo desde el original ni desde las intensidades:
+son exactamente las leídas del archivo. Como el código es canónico, bastan
+para reproducir los mismos códigos. El resultado XScanrec se asignará cuando
+termine la auxiliar. Entramos ahora en DecodeScans\_custom para entender
+qué ocurre dentro de esta sola instrucción.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Interfaz de DecodeScans\_custom}
+
+\textbf{Código real:} \texttt{DecodeScans\_custom.m}, líneas 1 a 4.
+
+\begin{lstlisting}[firstnumber=1]
+function XScanrec = DecodeScans_custom( ...
+    CodedY, CodedCb, CodedCr, tam, ...
+    BITS_Y_DC, HUFFVAL_Y_DC, BITS_Y_AC, HUFFVAL_Y_AC, ...
+    BITS_C_DC, HUFFVAL_C_DC, BITS_C_AC, HUFFVAL_C_AC)
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La declaración nombra las entradas en el mismo orden de la llamada.
+tam recibe [mamp namp]. La única salida es XScanrec, que reunirá los tres
+planos de etiquetas. Los nombres son locales: la auxiliar no puede consultar
+directamente X, TC ni otras variables del programa principal si no las recibe.
+
+Esto explica el error de visualización corregido en el desarrollo: poner
+imshow(X) aquí no funciona porque esta función no ha creado ni recibido X.
+Su responsabilidad es decodificar etiquetas; la evaluación y figura pertenecen
+a jdes\_custom.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Reconstruir las cuatro tablas de decodificación}
+
+\textbf{Código real:} \texttt{DecodeScans\_custom.m}, líneas 6 a 24.
+
+\begin{lstlisting}[firstnumber=6]
+    % Reconstruir la tabla de decodificacion DC de luminancia.
+    [~, HUFFCODE] = HCodeTables(BITS_Y_DC, HUFFVAL_Y_DC);
+    [mincode_Y_DC, maxcode_Y_DC, valptr_Y_DC] = ...
+        HDecodingTables(BITS_Y_DC, HUFFCODE);
+
+    % Reconstruir la tabla de decodificacion AC de luminancia.
+    [~, HUFFCODE] = HCodeTables(BITS_Y_AC, HUFFVAL_Y_AC);
+    [mincode_Y_AC, maxcode_Y_AC, valptr_Y_AC] = ...
+        HDecodingTables(BITS_Y_AC, HUFFCODE);
+
+    % Reconstruir la tabla de decodificacion DC de crominancia.
+    [~, HUFFCODE] = HCodeTables(BITS_C_DC, HUFFVAL_C_DC);
+    [mincode_C_DC, maxcode_C_DC, valptr_C_DC] = ...
+        HDecodingTables(BITS_C_DC, HUFFCODE);
+
+    % Reconstruir la tabla de decodificacion AC de crominancia.
+    [~, HUFFCODE] = HCodeTables(BITS_C_AC, HUFFVAL_C_AC);
+    [mincode_C_AC, maxcode_C_AC, valptr_C_AC] = ...
+        HDecodingTables(BITS_C_AC, HUFFCODE);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada familia necesita dos llamadas. HCodeTables recibe BITS/HUFFVAL y genera
+los mismos códigos canónicos que usó el compresor. El primer resultado,
+HUFFSIZE, se descarta con tilde porque esta ruta no lo usa. HUFFCODE conserva
+los números de los códigos en el orden de HUFFVAL.
+
+HDecodingTables recibe BITS y HUFFCODE y produce tres vectores. MINCODE(i)
+es el primer código de longitud i cuando existen códigos de esa longitud;
+MAXCODE(i) es el último y vale -1 si no existe ninguno; VALPTR(i) indica
+dónde empieza ese grupo dentro de HUFFVAL. Son ayudas de búsqueda, no
+nuevas frecuencias ni palabras de imagen.
+
+El patrón se repite para Y\_AC en 12 a 14, C\_DC en 17 a 19 y C\_AC en
+22 a 24. Se reutiliza HUFFCODE como temporal, pero cada conjunto de mincode,
+maxcode y valptr queda en variables propias. Las tablas de crominancia
+se aplicarán por igual a Cb y Cr.
+
+Ejemplo: si HUFFVAL=[10;20;30;40] y los códigos son 00, 01, 100, 101,
+para longitud 3 MINCODE=4, MAXCODE=5 y VALPTR=3. Al leer 101, su valor 5
+produce índice $3+5-4=4$ y HUFFVAL(4)=40. El código se traduce en símbolo,
+no en un píxel de valor 40.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{DecodeSingleScan: argumentos y retorno de cada plano}
+
+\textbf{Código real:} \texttt{DecodeScans\_custom.m}, líneas 26 a 45.
+
+\begin{lstlisting}[firstnumber=26]
+    % Decodificar luminancia.
+    YScanrec = DecodeSingleScan( ...
+        CodedY, ...
+        mincode_Y_DC, maxcode_Y_DC, valptr_Y_DC, HUFFVAL_Y_DC, ...
+        mincode_Y_AC, maxcode_Y_AC, valptr_Y_AC, HUFFVAL_Y_AC, ...
+        tam);
+
+    % Decodificar crominancia Cb.
+    CbScanrec = DecodeSingleScan( ...
+        CodedCb, ...
+        mincode_C_DC, maxcode_C_DC, valptr_C_DC, HUFFVAL_C_DC, ...
+        mincode_C_AC, maxcode_C_AC, valptr_C_AC, HUFFVAL_C_AC, ...
+        tam);
+
+    % Decodificar crominancia Cr.
+    CrScanrec = DecodeSingleScan( ...
+        CodedCr, ...
+        mincode_C_DC, maxcode_C_DC, valptr_C_DC, HUFFVAL_C_DC, ...
+        mincode_C_AC, maxcode_C_AC, valptr_C_AC, HUFFVAL_C_AC, ...
+        tam);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Cada llamada pasa diez argumentos: el flujo de caracteres; MINCODE, MAXCODE,
+VALPTR y HUFFVAL de DC; el mismo grupo de cuatro para AC; y tam. La separación
+DC/AC es necesaria porque una misma palabra de bits puede representar
+símbolos diferentes en diccionarios distintos.
+
+La primera llamada utiliza tablas de Y. Las dos siguientes utilizan las
+tablas compartidas de crominancia, pero leen sus propias secuencias CodedCb
+y CodedCr. Cada llamada inicializa su propio DCprevio a cero. Los resultados
+son matrices bidimensionales de etiquetas en zigzag, de tamaño tam.
+
+Dentro de DecodeSingleScan se mantiene ptr, el índice del siguiente carácter
+del flujo. DecodeWord lee bits hasta reconocer una palabra con las tablas
+canónicas y devuelve un símbolo más el puntero actualizado. Después el
+decodificador lee C bits de posición, si C es positivo. El puntero cuenta
+bits representados como caracteres, no bytes del archivo ya cerrado.
+
+Para DC se recupera la diferencia y se suma al DC anterior. Para AC se deja
+el bloque inicialmente a cero, se avanza por las rachas y se colocan los
+valores no nulos. ZRL suma 16 posiciones cero; EOB termina ese bloque. Este
+procedimiento debe reconstruir las etiquetas exactamente, no aproximadamente.
+La aproximación se introducirá al interpretar las etiquetas como coeficientes.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Reunir planos y regresar al programa principal}
+
+\textbf{Código real:} \texttt{DecodeScans\_custom.m}, líneas 47 a 50.
+
+\begin{lstlisting}[firstnumber=47]
+    % Reunir las tres componentes.
+    XScanrec = cat(3, YScanrec, CbScanrec, CrScanrec);
+
+end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+cat recibe primero el número de dimensión. El 3 indica que se apilan los
+tres planos en la tercera dimensión. No se suman ni se concatenan horizontalmente:
+el resultado tiene tamaño mamp por namp por 3, con Y, Cb y Cr en ese orden.
+
+La asignación prepara XScanrec, la salida de la auxiliar. El end final
+termina la función y el programa principal continúa después de su llamada.
+Las tablas mincode y el resto de temporales no se exportan porque ya han
+cumplido su función. XScanrec aún no es una imagen RGB para mostrar.
+
+
+\section{Reconstruir la imagen a partir de las etiquetas}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{invscan: devolver cada etiqueta a su frecuencia}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 199 a 200.
+
+\begin{lstlisting}[firstnumber=199]
+    % PASO 9: deshacer el orden zigzag.
+    Xlabrec = invscan(XScanrec);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+invscan deshace la permutación realizada por scan. Su entrada son las etiquetas
+en zigzag de los tres planos. Su salida Xlabrec contiene los mismos valores
+en las posiciones naturales de cada bloque de coeficientes.
+
+No se aplica una DCT en este paso. Tampoco se multiplican etiquetas ni se
+eliminan ceros. Cada posición vuelve a representar la frecuencia horizontal
+y vertical correspondiente: DC en la esquina superior izquierda y los AC
+en el resto. El tamaño ampliado no cambia.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{desquantmat: qué se puede recuperar y qué no}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 202 a 203.
+
+\begin{lstlisting}[firstnumber=202]
+    % PASO 10: descuantizar las etiquetas.
+    Xtransrec = desquantmat(Xlabrec, caliQ);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La función recibe Xlabrec y el caliQ leído de la cabecera. Reconstruye los
+mismos escalones QY y QC que utilizó el compresor y multiplica cada etiqueta
+por su escalón correspondiente, elemento a elemento y por bloques.
+
+Si se obtuvo etiqueta 4 con escalón 10, el coeficiente reconstruido es 40.
+No se sabe si el original era 37, 39 o algún otro valor del mismo intervalo.
+La multiplicación no puede recuperar la fracción descartada al cuantizar.
+Por eso Xtransrec se llama reconstruido y contiene coeficientes aproximados.
+
+Usar aquí caliQ=100 por costumbre sería un error si el archivo se comprimió
+con 50 o 500. Debe utilizarse el valor guardado, no una preferencia nueva
+del usuario del descompresor.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{imidct: deshacer la transformación y el centrado}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 205 a 206.
+
+\begin{lstlisting}[firstnumber=205]
+    % PASO 11: aplicar la DCT inversa.
+    Xamprec = imidct(Xtransrec, m, n);
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+imidct recibe los coeficientes aproximados y las dimensiones originales.
+Separa los tres planos, aplica $T^{\mathsf T}FT$ por bloques y suma 128
+para invertir el centrado de imdct. Xamprec vuelve a contener muestras
+espaciales, ya no coeficientes de frecuencia.
+
+Su espacio de color sigue siendo YCbCr, porque las transformaciones se
+aplicaron a esos planos. La implementación local no recorta aunque reciba
+m y n: conserva mamp por namp por 3. Esos argumentos se utilizan en el
+mensaje informativo. No debe deducirse del texto mostrado que la matriz
+ya tiene el tamaño original; el recorte aparece expresamente más adelante.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Descomponer la conversión a RGB en operaciones sencillas}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 208 a 209.
+
+\begin{lstlisting}[firstnumber=208]
+    % PASO 12: convertir a RGB, recortar y guardar.
+    Xrgb = uint8(round(ycbcr2rgb(Xamprec / 255) * 255));
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La expresión anidada se entiende desde dentro hacia fuera. Primero
+Xamprec/255 cambia la escala numérica a la convención double usada por
+ycbcr2rgb. Dividir una matriz por un escalar equivale aquí a dividir cada
+muestra. La función de color convierte los planos YCbCr a canales RGB.
+
+Después se multiplica por 255 para volver a la escala de 8 bits. round
+redondea las muestras y uint8 las convierte a enteros sin signo de un byte,
+con saturación para los valores fuera de 0 a 255. La salida Xrgb es una
+imagen RGB de 8 bits, todavía ampliada.
+
+Estas multiplicaciones por 255 no son la cuantización DCT ni una ganancia
+de calidad. Adaptan la escala entre representaciones de imagen. Los redondeos
+o saturaciones finales también pueden aportar pequeñas diferencias respecto
+al RGB original, además de las provocadas por la cuantización.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{Recortar el borde y escribir un BMP real}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 211 a 215.
+
+\begin{lstlisting}[firstnumber=211]
+    % Eliminar las filas y columnas anadidas al comprimir.
+    Xrec = Xrgb(1:m, 1:n, :);
+
+    % Guardar la imagen reconstruida.
+    imwrite(Xrec, archivoSalida, 'bmp');
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Xrgb(1:m,1:n,:) conserva filas desde 1 hasta m, columnas desde 1 hasta n
+y todos los planos. Las filas y columnas de ampliación estaban al final;
+por eso basta seleccionar esa región. Si las dimensiones ya eran múltiplos
+de ocho, la selección conserva toda la matriz.
+
+Xrec es la imagen final de tamaño original. imwrite recibe esa matriz,
+archivoSalida y el formato bmp. Guardar con extensión bmp y especificar el
+formato garantiza que se escribe una imagen BMP, no un volcado de bytes
+comprimidos con un nombre nuevo.
+
+Se guarda Xrec, no Xrgb ampliada ni Xamprec en YCbCr. Se conserva la matriz
+en memoria porque a continuación se compara muestra a muestra con X.
+
+
+\section{Medir calidad, medir tamaño y mostrar resultados}
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{MSE: calcular sin errores de tipo ni de dimensiones}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 217 a 220.
+
+\begin{lstlisting}[firstnumber=217]
+    % PASO 13: calcular el error cuadratico medio.
+    errorImagen = double(X) - double(Xrec);
+    erroresCuadrados = errorImagen .^ 2;
+    MSE = mean(erroresCuadrados(:));
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+La primera instrucción convierte ambas imágenes a double antes de restar.
+Si se restaran como uint8, las diferencias negativas no se representarían
+correctamente. Por ejemplo, 20-30 debe dar -10, no un valor saturado.
+
+El operador .\^{}2 eleva cada diferencia al cuadrado. El punto significa
+operación elemento a elemento, a diferencia de una potencia matricial.
+Una diferencia -10 y una +10 aportan ambas 100; las diferencias no se cancelan.
+
+erroresCuadrados(:) coloca todas las filas, columnas y canales en un solo
+vector. mean calcula su media, equivalente a sumar todo y dividir por 3mn.
+No se promedia solo el canal Y ni se usa el tamaño del archivo. MSE tiene
+unidades de nivel de muestra al cuadrado y no es un porcentaje.
+
+Ejemplo con errores 0, 2 y -1: los cuadrados son 0, 4 y 1, y MSE=5/3.
+MSE cero indica igualdad de muestras; un resultado positivo no demuestra
+por sí solo un error de Huffman, porque la cuantización es con pérdida.
+Para aislar Huffman se comparan etiquetas, como explica el capítulo de pruebas.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{RC: una métrica distinta del error de imagen}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 222 a 223.
+
+\begin{lstlisting}[firstnumber=222]
+    % PASO 14: calcular el porcentaje de espacio ahorrado.
+    RC = 100 * (TO - TC) / TO;
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+Se utiliza TO de la cabecera y TC medido al abrir el archivo. El tamaño del
+BMP recién reconstruido no interviene. TO-TC es la cantidad ahorrada; al
+dividir entre TO se obtiene una proporción y al multiplicar por 100, un porcentaje.
+
+Si ambos procesos trabajan con el mismo .huc, RC debe coincidir con el valor
+que devolvió el compresor. No depende de que la referencia elegida para
+MSE sea visualmente correcta: ese es otro control. La coincidencia de RC
+verifica la aritmética de tamaños, no la exactitud de las etiquetas.
+
+
+\par\medskip\noindent\begin{minipage}{\linewidth}
+
+\subsection{La figura y el final de la función}
+
+\textbf{Código real:} \texttt{jdes\_custom.m}, líneas 226 a 237.
+
+\begin{lstlisting}[firstnumber=226]
+    % PASO 15: mostrar la imagen original y la reconstruida.
+    figure;
+
+    subplot(1, 2, 1);
+    imshow(X);
+    title('Imagen original');
+
+    subplot(1, 2, 2);
+    imshow(Xrec);
+    title('Imagen descomprimida custom');
+    
+end
+\end{lstlisting}
+
+\end{minipage}\par
+
+
+figure abre una ventana de gráficos. subplot(1,2,1) la organiza en una fila
+y dos columnas y activa la primera posición. imshow(X) dibuja el original;
+title le asigna el texto que identifica ese panel.
+
+subplot(1,2,2) activa la segunda posición. imshow(Xrec) dibuja el reconstruido
+y title lo distingue del original. No se muestran Xlabrec ni coeficientes:
+son imágenes RGB listas para visualización. La figura permite ver dónde
+se pierde detalle, algo que un único MSE no localiza.
+
+El end final cierra jdes\_custom. MSE y RC, ya asignados, se devuelven en el
+orden declarado al principio; la imagen BMP permanece guardada. Los objetos
+y variables locales restantes se liberan. La ventana gráfica puede seguir abierta.
+
+
+\section{Comprobar que puedes explicar cualquier línea}
+
+Al señalar una llamada a fread, debes decir cuántos elementos solicita,
+cuántos bytes ocupa cada uno, qué tipo devuelve y dónde queda el puntero.
+Al señalar una conversión de tipo, distingue si solo prepara cálculos
+(double de uint32) o si discretiza y limita muestras (uint8 del RGB final).
+
+Al señalar un control, explica qué error evita y qué no demuestra. La igualdad
+de dimensiones no identifica una imagen; la cantidad correcta de bytes no
+valida todos los códigos; una imagen parecida no demuestra igualdad de etiquetas.
+Al señalar un end, identifica si cierra un if, un for o una función.
+
+El recorrido de vuelta se resume así: ``Interpreto metadatos; leo diccionarios
+y flujos; deshago empaquetado; reconozco símbolos y amplitudes; recupero
+etiquetas; restauro posiciones; aproximo coeficientes; reconstruyo muestras;
+convierto y recorto; evalúo''. Cada verbo corresponde a una responsabilidad
+concreta del código, no a una promesa de recuperar información ya descartada.
+
+
+\chapter{Ejemplo resuelto y seguimiento de variables}
+\section{Un bloque sencillo de principio a fin}
+
+Considera un plano Y con un bloque constante de valor 138. Al centrarlo queda
+10 en cada muestra. Su DCT ideal tiene DC=80 y todos los AC cero.
+Con caliQ=100, QY(1,1)=16, por lo que la etiqueta DC es
+$\lfloor80/16+0.5\rfloor=5$. Los AC siguen siendo cero.
+
+En el primer bloque, la diferencia DC es 5-0=5; catpos produce C=3,P=5.
+La representación AC solo necesita EOB. El flujo conceptual es:
+\[
+H_{Y,DC}(3)\;||\;101\;||\;H_{Y,AC}(0),
+\]
+donde $||$ significa concatenación y H indica el código de la tabla a medida.
+No se pueden dar sus palabras concretas sin conocer las frecuencias del conjunto
+de la imagen. Si fuera una imagen artificial de un único bloque, se calcularían
+las tablas de ese caso particular.
+
+Al decodificar, se obtiene la categoría 3, se leen 101 y se recupera 5.
+Se suma la referencia DC inicial cero. EOB deja los 63 AC a cero. invscan
+restaura posiciones y la descuantización devuelve DC=5 por 16=80.
+La IDCT devuelve 10 y se suma 128: se recuperan las muestras Y=138 en este
+ejemplo ideal. No demuestra que todo bloque se recupere exactamente: aquí
+el DC era múltiplo del escalón. Con DC=83 también se etiquetaría como 5
+y se reconstruiría 80. Además, el recorrido RGB/YCbCr y la conversión final
+pueden aportar redondeos.
+
+
+\section{Diccionario de las matrices principales}
+
+\begin{longtable}{p{.23\textwidth}p{.65\textwidth}}
+\toprule Variable & Contenido y significado\\\midrule\endhead
+X & Original RGB uint8, $m\times n\times3$; referencia del MSE.\\
+Xamp & Muestras YCbCr double, ampliadas a múltiplos de 8.\\
+Xtrans & Coeficientes DCT por bloque, con signo.\\
+Xlab & Etiquetas cuantizadas, enteras aunque se almacenen como double.\\
+XScan & Las mismas etiquetas reordenadas por bloque.\\
+DC\_CP & Categoría y posición de diferencias DC; dos columnas.\\
+AC\_ZCP & Símbolo ZCdec y posición; dos columnas.\\
+FREQ & Recuentos absolutos; índice símbolo+1.\\
+BITS & Recuentos de códigos por longitud.\\
+HUFFVAL & Símbolos en orden de asignación de códigos.\\
+ehuf & Código numérico y longitud por símbolo.\\
+CodedY/Cb/Cr & Caracteres binarios anteriores al empaquetado.\\
+bytesY/Cb/Cr & Valores uint8 listos para escribir.\\
+XScanrec & Etiquetas recuperadas por Huffman, aún en zigzag.\\
+Xlabrec & Etiquetas en sus posiciones DCT naturales.\\
+Xtransrec & Coeficientes aproximados tras descuantizar.\\
+Xamprec & Muestras YCbCr reconstruidas y ampliadas.\\
+Xrgb & Imagen RGB uint8 todavía ampliada.\\
+Xrec & Imagen RGB final, recortada a $m\times n\times3$.\\\bottomrule
+\end{longtable}
+
+
+\chapter{Validación, errores y límites reales}
+\section{Qué demuestra la prueba comunicada}
+
+El diario y la captura aportados recogen Img00.bmp con caliQ=100,
+anchura 480 y altura 640, RCcomp=RCdes=97,80\% y MSE=34,546211.
+Ambas dimensiones son múltiplos de ocho, por lo que no hubo ampliación.
+Hay $80\cdot60=4800$ bloques por componente y 14400 entre los tres planos.
+
+El resultado muestra que esa ejecución llegó al final, produjo una imagen
+visualmente coherente y obtuvo RC compatibles. No verifica otras imágenes,
+otras calidades, casos constantes ni dimensiones no múltiplos de ocho.
+Tampoco se han vuelto a ejecutar aquí las funciones en MATLAB. La raíz del
+MSE, aproximadamente 5,88 niveles de muestra, puede dar una escala del error,
+pero no significa que todos los píxeles difieran esa cantidad.
+
+Una RC tan alta respecto a un BMP puede ser razonable porque el BMP contiene
+muchos datos sin compresión. No demuestra que el resultado supere a JPEG ni
+que custom siempre mejore dflt. Si comprimes un JPEG de entrada, TO ya será
+el tamaño de un archivo comprimido y la comparación tendrá otra referencia.
+
+
+\section{La comprobación exacta de Huffman}
+
+La igualdad importante es $XScanrec=XScan$, no necesariamente $Xrec=X$.
+Para comprobar la codificación sin implicar el archivo ni la cuantización inversa,
+puedes ejecutar esta prueba en un script separado:
+
+
+\begin{lstlisting}
+[~, Xamp] = imlee('Img00.bmp');
+XScan = scan(quantmat(imdct(Xamp), 100));
+[a, b, c, bydc, hydc, byac, hyac, bcdc, hcdc, bcac, hcac] = ...
+    EncodeScans_custom(XScan);
+rec = DecodeScans_custom(a, b, c, ...
+    [size(XScan,1) size(XScan,2)], ...
+    bydc, hydc, byac, hyac, bcdc, hcdc, bcac, hcac);
+assert(isequal(XScan, rec), ...
+    'La codificacion Huffman no recupera las etiquetas exactamente.');
+\end{lstlisting}
+
+
+Este script es una prueba propuesta, no un resultado ya obtenido. Para comprobar
+también escritura, lectura y empaquetado, puede usarse el depurador de MATLAB:
+detener el compresor después de scan, guardar XScan en una variable del espacio
+base y detener el descompresor después de DecodeScans\_custom para comparar.
+Es importante guardar la misma imagen y caliQ y no confundir las variables
+locales de funciones diferentes.
+
+\section{Un detalle de las auxiliares que conviene revisar}
+
+La intención JPEG y DecodeSingleScan establecen que C=0 no lleva bits de
+posición; lo mismo sucede con ZRL. Sin embargo, la copia consultada de
+EncodeSingleScan llama a \texttt{dec2bin(P,C)} sin una condición C>0 para
+DC y para símbolos AC internos. No se debe dar por hecho que pedir ancho
+cero produzca una cadena vacía: MATLAB puede devolver un carácter para el cero.
+Si se añade un bit no esperado, se desincroniza el lector.
+
+Esto no se ha corregido al generar la guía y no se afirma que haya fallado
+en la ejecución comunicada. Es una limitación a verificar, especialmente con
+bloques de DC repetidos y rachas ZRL. La forma conceptual robusta es añadir
+los bits de P únicamente si C>0, manteniendo el mismo convenio en ambos lados.
+El resultado exacto de etiquetas propuesto arriba permite detectar problemas
+que una imagen visualmente parecida o la igualdad de RC no revelan.
+
+
+\section{Errores encontrados durante el desarrollo}
+
+\textbf{BITS con menos de 16 posiciones.} No era un error del árbol: AdjustBits
+recorta la cola. Se completó con ceros al serializar para mantener 32 bytes
+por tabla. Cambiar solo el lector o solo el tamaño previsto habría roto el contrato.
+
+\textbf{Variable X no reconocida.} Se había colocado la figura dentro de
+DecodeScans\_custom. Cada función tiene su propio espacio de variables;
+el bloque se trasladó a jdes\_custom, donde existen X y Xrec.
+
+\textbf{Aviso OpenGL.} El cambio al renderizado por software afecta a la
+visualización. No explica por sí mismo un error de variables o de Huffman.
+
+\textbf{Cobertura limitada.} Las comprobaciones de tamaños, duplicados y rangos
+no constituyen un validador completo de archivos malformados. Se asume el
+formato producido por este proyecto. La implementación concatena vectores
+en bucles y representa bits como texto en memoria, de modo que no está
+optimizada para imágenes grandes.
+
+
+\chapter{Preparar la entrevista con el profesor}
+\section{Explicación de dos minutos}
+
+\begin{quote}
+Mi compresor empieza leyendo la imagen y convirtiéndola a YCbCr. Amplía los
+bordes a múltiplos de ocho porque trabaja por bloques de 8 por 8. Aplica la DCT
+para representar cada bloque mediante frecuencias y cuantiza los coeficientes;
+esa es la etapa principal de pérdida.
+
+Después reordena las etiquetas en zigzag. Representa los DC como diferencias
+y los AC mediante rachas de ceros y categorías. Cuenta los símbolos y genera
+cuatro tablas Huffman canónicas: DC y AC de Y, y DC y AC compartidas por Cb y Cr.
+Codifica, empaqueta en bytes y escribe los metadatos, las especificaciones
+Huffman y los tres flujos en un archivo propio .huc.
+
+El descompresor lee ese contrato en el mismo orden, reconstruye las tablas,
+recupera las etiquetas, deshace el zigzag, descuantiza y aplica la DCT inversa.
+Convierte a RGB, recorta los bordes y guarda el BMP. Finalmente compara con
+la imagen original para obtener el MSE y calcula el ahorro RC. Huffman debe
+recuperar las etiquetas exactamente, aunque la imagen final difiera por la
+cuantización y los redondeos.
+\end{quote}
+
+
+\subsection{¿Dónde se pierde información?}
+Principalmente al cuantizar: varios coeficientes se convierten en una misma etiqueta. La DCT, el zigzag y Huffman no están diseñados para introducir pérdida. Las conversiones de color y a uint8 también pueden introducir redondeos o saturación.
+
+\subsection{¿Por qué no aplicas Huffman directamente a RGB?}
+Esta cadena busca una representación más favorable: la transformación concentra información, la cuantización genera ceros y DC diferencial y rachas reducen los símbolos a categorías útiles. Huffman se aplica a esos símbolos, no a intensidades originales.
+
+\subsection{¿Cuantizas también el DC?}
+Sí. Se cuantizan las 64 posiciones del bloque, cada una con su escalón. DC no queda exento. Después se calculan diferencias entre las etiquetas DC de bloques sucesivos.
+
+\subsection{¿Por qué cuatro tablas y no tres o seis?}
+Se separan DC y AC porque tienen alfabetos y estadísticas distintos. Y dispone de ambas tablas propias; Cb y Cr comparten las otras dos. Son cuatro familias para tres secuencias.
+
+\subsection{¿Qué diferencia hay entre C y P?}
+C indica la cantidad de bits de amplitud; P selecciona el valor concreto, incluido su signo, dentro de esa categoría. Huffman codifica C para DC o ZCdec para AC; P se añade por separado.
+
+\subsection{¿Qué significa BITS(3)=2?}
+Existen dos palabras de longitud tres. No dice que el símbolo 3 aparezca dos veces ni que su código tenga longitud dos. La frecuencia y el recuento por longitud son tablas diferentes.
+
+\subsection{¿Cómo reconstruyes códigos sin guardar el árbol?}
+Guardo BITS y HUFFVAL. El algoritmo canónico asigna códigos de forma determinista según las longitudes y el orden de los símbolos. No necesita las frecuencias originales.
+
+\subsection{¿El descompresor necesita la imagen original?}
+No para recuperar los datos del .huc. Mi función completa la solicita porque también calcula MSE y muestra la comparación. Son responsabilidades de evaluación que podrían separarse.
+
+\subsection{¿Por qué guardas caliQ?}
+Porque el descompresor necesita reproducir los escalones QY y QC antes de multiplicar las etiquetas. No se puede descuantizar correctamente con un caliQ distinto.
+
+\subsection{¿Por qué guardas TO si ya conoces m y n?}
+TO es el tamaño real del archivo de origen y permite calcular RC según el contrato. No siempre coincide con 3mn: puede incluir cabecera, paleta o compresión del archivo de entrada.
+
+\subsection{¿Qué representa ultl=0?}
+Que la secuencia ocupa bytes completos sin un grupo residual. No significa que el último byte sea inválido ni que haya cero bits en toda la secuencia.
+
+\subsection{¿Custom siempre ocupa menos que dflt?}
+No. Puede ahorrar bits de datos, pero debe almacenar cuatro especificaciones. El balance total depende de la imagen y del coste de las tablas.
+
+\subsection{¿Por qué coinciden las RC y el MSE no es cero?}
+Las RC usan los mismos tamaños de archivos. El MSE mide muestras de imagen y puede ser positivo por la cuantización. Son métricas de fenómenos distintos.
+
+\subsection{¿Cómo demostrarías que Huffman funciona?}
+Compararía exactamente XScan antes de codificar con XScanrec después de decodificar. Una imagen reconocible o un ahorro alto no sustituyen esa igualdad.
+
+\subsection{¿Qué has implementado y qué has reutilizado?}
+He coordinado los dos procesos, adaptado EncodeScans y DecodeScans a las tablas a medida, definido la serialización y añadido controles y métricas. He reutilizado las auxiliares de imagen, símbolos y Huffman de la librería, explicando su contrato y sus límites.
+
+\subsection{¿Qué mejorarías?}
+Separaría evaluación y descompresión, permitiría nombres de salida configurables, añadiría identificación de formato y validación más completa, comprobaría C=0 en el codificador y ampliaría las pruebas. Son mejoras propuestas, no trabajo ya ejecutado.
+
+\section{Ejercicios para comprobar que lo entiendes}
+
+Antes de mirar, calcula: (1) ampliación de una imagen de 17 filas y 9 columnas;
+(2) categoría y posición de -6; (3) símbolo para 4 ceros antes de 5;
+(4) bytes y ultl para 19 bits; (5) RC si TO=2000 y TC=600.
+
+\textbf{Soluciones razonadas:} (1) $24\times16$, con $3\cdot2=6$ bloques
+por componente. (2) C=3, P=7-6=1, bits 001. (3) C=3 y símbolo $16\cdot4+3=67$;
+P=5 aporta 101. (4) Tres bytes, ultl=3 y cinco bits de relleno.
+(5) RC=70\%, proporción ocupada=30\% y factor de compresión $2000/600\simeq3,33$.
+
+Si no puedes explicar una solución, vuelve a la etapa correspondiente del
+capítulo 2 y sigue un bloque con papel y lápiz. En la entrevista conviene
+justificar las decisiones antes de citar los nombres de funciones.
+
+
+\chapter{Correspondencia con el diario y fuentes}
+\section{Cómo encajan los pasos de desarrollo}
+
+El diario de compresión distribuye el trabajo en 16 pasos: 1 a 5 preparan
+la imagen; 6 a 10 desarrollan EncodeScans\_custom; 11 empaqueta; 12 define
+el formato; 13 escribe; 14 calcula RC; 15 y 16 documentan pruebas y correcciones.
+El código principal agrupa esas responsabilidades en diez comentarios PASO.
+No son dos algoritmos diferentes: cambia el nivel de detalle.
+
+En descompresión, los pasos 1 a 6 preparan la referencia y leen el contenedor;
+7 y 8 reconstruyen tablas y decodifican dentro de DecodeScans\_custom;
+9 a 12 reconstruyen la imagen; 13 a 15 evalúan y visualizan; 16 prueba el conjunto.
+Los capítulos 3 y 5 explican cada uno de esos pasos y sus auxiliares.
+
+
+\section{Material utilizado y alcance}
+
+\begin{enumerate}
+\item \texttt{desarrollo\_ejercicio2.md}: diario completo de implementación,
+correcciones y prueba comunicada.
+\item \texttt{jcom\_custom.m}, \texttt{jdes\_custom.m},
+\texttt{EncodeScans\_custom.m} y \texttt{DecodeScans\_custom.m}:
+código real consultado, reproducido en los apéndices.
+\item Auxiliares del proyecto: imlee, imdct, quantmat, quant88, scan,
+CollectScan, catpos, zercatpos, Freq256, HSpecTables, AdjustBits,
+HCodeTables, HCodingTables, EncodeSingleScan, bits2bytes, bytes2bits,
+HDecodingTables, DecodeWord, DecodeSingleScan e imidct. Se contrastaron
+también las rutas dflt disponibles para interpretar la adaptación.
+\item Material docente consultado en el desarrollo: guion4, apartado 2;
+Pract4, en particular el encargo custom y la ampliación de interfaces;
+plan de construcción aportado. Las explicaciones de esta guía se ajustan
+al código local; el formato binario concreto es una decisión del proyecto.
+\end{enumerate}
+No se han modificado los archivos MATLAB ni el diario para generar esta guía.
+Los fragmentos de prueba y posibles mejoras están identificados como propuestas.
+En los listados siguientes solo se transliteran acentos de comentarios para
+su composición tipográfica; las instrucciones ejecutables y sus líneas se conservan.
+
+
+\appendix
+\chapter{Código completo del compresor}\label{src:jcom_custom.m}
+
+Archivo: \texttt{jcom\_custom.m}. Las líneas corresponden a la copia consultada.
+
+\begin{lstlisting}
+function RC = jcom_custom(fname, caliQ)
+    % Comprime una imagen utilizando tablas Huffman a medida.
+    % fname: nombre del archivo de imagen.
+    % caliQ: factor de cuantizacion, entero positivo.
+    % RC: porcentaje de espacio ahorrado.
+
+    % PASO 1: validar la calidad y preparar los archivos.
+    validateattributes(caliQ, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'integer', 'positive'});
+
+    % Tamano original en bytes, necesario para calcular RC al final.
+    info = dir(fname);
+    TO = info.bytes;
+
+    % Nombre del archivo comprimido.
+    archivo = 'comprimido.huc';
+
+    % PASO 2: leer y acondicionar la imagen.
+    [X, Xamp, tipo, m, n, mamp, namp] = imlee(fname);
+
+    % PASO 3: transformar la imagen mediante DCT.
+    Xtrans = imdct(Xamp);
+
+    % PASO 4: cuantizar los coeficientes DCT.
+    Xlab = quantmat(Xtrans, caliQ);
+
+    % PASO 5: recorrer los bloques en zigzag.
+    XScan = scan(Xlab);
+
+    % PASO 6: construir las tablas a medida y codificar.
+    [CodedY, CodedCb, CodedCr, ...
+        BITS_Y_DC, HUFFVAL_Y_DC, BITS_Y_AC, HUFFVAL_Y_AC, ...
+        BITS_C_DC, HUFFVAL_C_DC, BITS_C_AC, HUFFVAL_C_AC] ...
+        = EncodeScans_custom(XScan);
+
+
+    % PASO 7: empaquetar las secuencias binarias en bytes.
+    [bytesY, ultlY]   = bits2bytes(CodedY);
+    [bytesCb, ultlCb] = bits2bytes(CodedCb);
+    [bytesCr, ultlCr] = bits2bytes(CodedCr);
+
+    % Numero de bytes de cada componente.
+    LY  = numel(bytesY);
+    LCb = numel(bytesCb);
+    LCr = numel(bytesCr);
+    
+    % PASO 8: preparar la cabecera y las especificaciones Huffman.
+
+    % Comprobar que los datos generales caben en uint32.
+    campos32 = [m n caliQ TO LY LCb LCr];
+
+    validateattributes(campos32, {'numeric'}, ...
+        {'real', 'finite', 'integer', 'nonnegative', ...
+         '<=', double(intmax('uint32'))});
+
+    % Datos generales de la imagen.
+    cabecera = uint32([m n caliQ TO]);
+
+    % Agrupar las cuatro especificaciones en un orden fijo:
+    % Y_DC, Y_AC, C_DC, C_AC.
+    tablasBITS = {BITS_Y_DC, BITS_Y_AC, BITS_C_DC, BITS_C_AC};
+    tablasHUFFVAL = {HUFFVAL_Y_DC, HUFFVAL_Y_AC, ...
+                     HUFFVAL_C_DC, HUFFVAL_C_AC};
+
+    % Comprobar y completar las especificaciones.
+    for k = 1:4
+        b = tablasBITS{k};
+        b = b(:);  % Asegurar formato columna.
+
+        assert(numel(b) <= 16, ...
+            'BITS no puede superar 16 elementos.');
+
+        % Completar con ceros hasta tener 16 posiciones.
+        b(end+1:16, 1) = 0;
+        tablasBITS{k} = b;
+
+        assert(sum(b) == numel(tablasHUFFVAL{k}), ...
+            'BITS y HUFFVAL no son coherentes.');
+    end
+
+
+    % PASO 9: escribir el archivo comprimido.
+    fid = fopen(archivo, 'wb', 'ieee-le');
+
+    if fid == -1
+        error('No se ha podido crear el archivo comprimido.');
+    end
+
+    % Tamano esperado: cabecera, tablas y componentes.
+    % Cabecera: 16 bytes.
+    % Cuatro BITS: 4 * 16 * 2 = 128 bytes.
+    % Longitud e indicador por componente: 3 * (4 + 1) = 15 bytes.
+    TCprevisto = 16 + 128 + 15 + LY + LCb + LCr;
+
+    for k = 1:4
+        TCprevisto = TCprevisto + numel(tablasHUFFVAL{k});
+    end
+
+    try
+        % Datos generales: m, n, caliQ y TO.
+        escritos = 4 * fwrite(fid, cabecera, 'uint32');
+
+        % Especificaciones Huffman: Y_DC, Y_AC, C_DC, C_AC.
+        for k = 1:4
+            escritos = escritos + ...
+                2 * fwrite(fid, uint16(tablasBITS{k}), 'uint16');
+
+            escritos = escritos + ...
+                fwrite(fid, uint8(tablasHUFFVAL{k}), 'uint8');
+        end
+
+        % Componente Y.
+        escritos = escritos + 4 * fwrite(fid, uint32(LY), 'uint32');
+        escritos = escritos + fwrite(fid, uint8(ultlY), 'uint8');
+        escritos = escritos + fwrite(fid, bytesY, 'uint8');
+
+        % Componente Cb.
+        escritos = escritos + 4 * fwrite(fid, uint32(LCb), 'uint32');
+        escritos = escritos + fwrite(fid, uint8(ultlCb), 'uint8');
+        escritos = escritos + fwrite(fid, bytesCb, 'uint8');
+
+        % Componente Cr.
+        escritos = escritos + 4 * fwrite(fid, uint32(LCr), 'uint32');
+        escritos = escritos + fwrite(fid, uint8(ultlCr), 'uint8');
+        escritos = escritos + fwrite(fid, bytesCr, 'uint8');
+
+        % Comprobar que se han escrito todos los bytes.
+        if escritos ~= TCprevisto
+            error('La escritura del archivo ha quedado incompleta.');
+        end
+
+    catch fallo
+        fclose(fid);
+        rethrow(fallo);
+    end
+
+    estado = fclose(fid);
+
+    if estado ~= 0
+        error('No se ha podido cerrar correctamente el archivo.');
+    end
+
+    % PASO 10: medir el archivo comprimido y calcular RC.
+    infoComprimido = dir(archivo);
+    TC = infoComprimido.bytes;
+
+    % Comprobar el tamano real del archivo.
+    if TC ~= TCprevisto
+        error('El tamano del archivo no coincide con el previsto.');
+    end
+
+    % Porcentaje de espacio ahorrado.
+    RC = 100 * (TO - TC) / TO;
+
+end
+\end{lstlisting}
+
+\chapter{Código completo de la auxiliar de codificación}\label{src:EncodeScans_custom.m}
+
+Archivo: \texttt{EncodeScans\_custom.m}. Las líneas corresponden a la copia consultada.
+
+\begin{lstlisting}
+function [CodedY, CodedCb, CodedCr, ...
+    BITS_Y_DC, HUFFVAL_Y_DC, BITS_Y_AC, HUFFVAL_Y_AC, ...
+    BITS_C_DC, HUFFVAL_C_DC, BITS_C_AC, HUFFVAL_C_AC] ...
+    = EncodeScans_custom(XScan)
+
+    % Separar las tres componentes.
+    YScan  = XScan(:,:,1);
+    CbScan = XScan(:,:,2);
+    CrScan = XScan(:,:,3);
+
+    % Preparar los simbolos DC y AC de cada componente.
+    [Y_DC_CP, Y_AC_ZCP]   = CollectScan(YScan);
+    [Cb_DC_CP, Cb_AC_ZCP] = CollectScan(CbScan);
+    [Cr_DC_CP, Cr_AC_ZCP] = CollectScan(CrScan);
+
+    % Contar las frecuencias de luminancia.
+    FREQ_Y_DC = Freq256(Y_DC_CP(:,1));
+    FREQ_Y_AC = Freq256(Y_AC_ZCP(:,1));
+
+    % Contar conjuntamente las frecuencias de Cb y Cr.
+    FREQ_C_DC = Freq256([Cb_DC_CP(:,1); Cr_DC_CP(:,1)]);
+    FREQ_C_AC = Freq256([Cb_AC_ZCP(:,1); Cr_AC_ZCP(:,1)]);
+
+    % Generar las especificaciones Huffman de luminancia.
+    [BITS_Y_DC, HUFFVAL_Y_DC] = HSpecTables(FREQ_Y_DC);
+    [BITS_Y_AC, HUFFVAL_Y_AC] = HSpecTables(FREQ_Y_AC);
+
+    % Generar las especificaciones Huffman de crominancia.
+    [BITS_C_DC, HUFFVAL_C_DC] = HSpecTables(FREQ_C_DC);
+    [BITS_C_AC, HUFFVAL_C_AC] = HSpecTables(FREQ_C_AC);
+
+    % Tabla de codificacion DC de luminancia.
+    [HUFFSIZE, HUFFCODE] = HCodeTables(BITS_Y_DC, HUFFVAL_Y_DC);
+    [EHUFCO, EHUFSI] = HCodingTables(HUFFSIZE, HUFFCODE, HUFFVAL_Y_DC);
+    ehuf_Y_DC = [EHUFCO EHUFSI];
+
+    % Tabla de codificacion AC de luminancia.
+    [HUFFSIZE, HUFFCODE] = HCodeTables(BITS_Y_AC, HUFFVAL_Y_AC);
+    [EHUFCO, EHUFSI] = HCodingTables(HUFFSIZE, HUFFCODE, HUFFVAL_Y_AC);
+    ehuf_Y_AC = [EHUFCO EHUFSI];
+
+    % Tabla de codificacion DC de crominancia.
+    [HUFFSIZE, HUFFCODE] = HCodeTables(BITS_C_DC, HUFFVAL_C_DC);
+    [EHUFCO, EHUFSI] = HCodingTables(HUFFSIZE, HUFFCODE, HUFFVAL_C_DC);
+    ehuf_C_DC = [EHUFCO EHUFSI];
+
+    % Tabla de codificacion AC de crominancia.
+    [HUFFSIZE, HUFFCODE] = HCodeTables(BITS_C_AC, HUFFVAL_C_AC);
+    [EHUFCO, EHUFSI] = HCodingTables(HUFFSIZE, HUFFCODE, HUFFVAL_C_AC);
+    ehuf_C_AC = [EHUFCO EHUFSI];
+
+    % Codificar luminancia con sus tablas DC y AC.
+    CodedY = EncodeSingleScan( ...
+        YScan, Y_DC_CP, Y_AC_ZCP, ehuf_Y_DC, ehuf_Y_AC);
+
+    % Codificar ambas crominancias con las tablas compartidas.
+    CodedCb = EncodeSingleScan( ...
+        CbScan, Cb_DC_CP, Cb_AC_ZCP, ehuf_C_DC, ehuf_C_AC);
+
+    CodedCr = EncodeSingleScan( ...
+        CrScan, Cr_DC_CP, Cr_AC_ZCP, ehuf_C_DC, ehuf_C_AC);
+
+end
+\end{lstlisting}
+
+\chapter{Código completo del descompresor}\label{src:jdes_custom.m}
+
+Archivo: \texttt{jdes\_custom.m}. Las líneas corresponden a la copia consultada.
+
+\begin{lstlisting}
+function [MSE, RC] = jdes_custom(fname)
+    % Descomprime un archivo .huc con tablas Huffman a medida.
+    % fname: nombre del archivo comprimido.
+    % MSE: error cuadratico medio de la reconstruccion.
+    % RC: porcentaje de espacio ahorrado.
+
+    % PASO 1: comprobar el archivo y obtener su tamano.
+    if ~isfile(fname)
+        error('No se encuentra el archivo comprimido.');
+    end
+
+    info = dir(fname);
+    TC = info.bytes;
+
+    % Nombre de la imagen que se guardara al descomprimir.
+    archivoSalida = 'comprimido_des_cus.bmp';
+
+    % PASO 2: obtener la imagen original para la comparacion.
+    nombreOriginal = input( ...
+        'Introduce el nombre de la imagen original: ', 's');
+
+    if ~isfile(nombreOriginal)
+        error('No se encuentra la imagen original.');
+    end
+
+    % Leer la imagen original en RGB.
+    [X, ~, ~, mOriginal, nOriginal] = imlee(nombreOriginal);
+
+    if size(X, 3) ~= 3 || ~isa(X, 'uint8')
+        error('La imagen original debe estar en RGB de 8 bits.');
+    end
+
+    % PASO 3: abrir el archivo y leer la cabecera.
+    fid = fopen(fname, 'rb', 'ieee-le');
+
+    if fid == -1
+        error('No se ha podido abrir el archivo comprimido.');
+    end
+
+    % Cerrar automaticamente el archivo al terminar la funcion,
+    % incluso si ocurre un error.
+    cierreArchivo = onCleanup(@() fclose(fid));
+
+    % Leer los cuatro valores uint32 de la cabecera.
+    datos = fread(fid, 4, '*uint32');
+
+    if numel(datos) ~= 4
+        error('La cabecera del archivo .huc esta incompleta.');
+    end
+
+    % Convertir a double para los calculos posteriores.
+    m     = double(datos(1));
+    n     = double(datos(2));
+    caliQ = double(datos(3));
+    TO    = double(datos(4));
+
+    if any([m n caliQ TO] == 0)
+        error('La cabecera contiene valores no validos.');
+    end
+
+    % Recuperar las dimensiones ampliadas.
+    mamp = 8 * ceil(m / 8);
+    namp = 8 * ceil(n / 8);
+
+    % Comprobar las dimensiones de la imagen de referencia.
+    if mOriginal ~= m || nOriginal ~= n
+        error('La imagen original no coincide en dimensiones.');
+    end
+
+    % PASO 4: leer las cuatro especificaciones Huffman.
+    % Orden: Y_DC, Y_AC, C_DC, C_AC.
+    tablasBITS = cell(1, 4);
+    tablasHUFFVAL = cell(1, 4);
+
+    for k = 1:4
+        % Cada BITS contiene 16 valores uint16.
+        b = fread(fid, 16, '*uint16');
+
+        if numel(b) ~= 16
+            error('Lectura incompleta de BITS en la tabla %d.', k);
+        end
+
+        b = double(b);
+
+        % La suma de BITS indica cuantos simbolos leer.
+        cantidadSimbolos = sum(b);
+
+        if cantidadSimbolos < 1 || cantidadSimbolos > 256
+            error('Cantidad de simbolos no valida en la tabla %d.', k);
+        end
+
+        % Cada simbolo de HUFFVAL ocupa un uint8.
+        h = fread(fid, cantidadSimbolos, '*uint8');
+
+        if numel(h) ~= cantidadSimbolos
+            error('Lectura incompleta de HUFFVAL en la tabla %d.', k);
+        end
+
+        h = double(h);
+
+        if numel(unique(h)) ~= cantidadSimbolos
+            error('HUFFVAL contiene simbolos repetidos en la tabla %d.', k);
+        end
+
+        tablasBITS{k} = b;
+        tablasHUFFVAL{k} = h;
+    end
+
+    % Identificar las especificaciones de cada tabla.
+    BITS_Y_DC = tablasBITS{1};
+    HUFFVAL_Y_DC = tablasHUFFVAL{1};
+
+    BITS_Y_AC = tablasBITS{2};
+    HUFFVAL_Y_AC = tablasHUFFVAL{2};
+
+    BITS_C_DC = tablasBITS{3};
+    HUFFVAL_C_DC = tablasHUFFVAL{3};
+
+    BITS_C_AC = tablasBITS{4};
+    HUFFVAL_C_AC = tablasHUFFVAL{4};
+
+
+    % PASO 5: leer las tres componentes comprimidas.
+    nombres = {'Y', 'Cb', 'Cr'};
+    bytesComponentes = cell(1, 3);
+    longitudes = zeros(1, 3);
+    indicadores = zeros(1, 3);
+
+    for k = 1:3
+        % Leer la cantidad de bytes de la componente.
+        longitud = fread(fid, 1, '*uint32');
+
+        if isempty(longitud)
+            error('No se ha podido leer la longitud de %s.', nombres{k});
+        end
+
+        % Leer el indicador del ultimo byte.
+        ultl = fread(fid, 1, '*uint8');
+
+        if isempty(ultl)
+            error('No se ha podido leer ultl de %s.', nombres{k});
+        end
+
+        longitud = double(longitud);
+        ultl = double(ultl);
+
+        if ultl > 7
+            error('Indicador ultl no valido en %s.', nombres{k});
+        end
+
+        if longitud == 0 || longitud > TC - ftell(fid)
+            error('Longitud no valida en %s.', nombres{k});
+        end
+
+        % Leer los bytes empaquetados.
+        bytes = fread(fid, longitud, '*uint8');
+
+        if numel(bytes) ~= longitud
+            error('Lectura incompleta de %s.', nombres{k});
+        end
+
+        longitudes(k) = longitud;
+        indicadores(k) = ultl;
+        bytesComponentes{k} = bytes;
+    end
+
+    % Recuperar las variables de cada componente.
+    LY  = longitudes(1);
+    LCb = longitudes(2);
+    LCr = longitudes(3);
+
+    ultlY  = indicadores(1);
+    ultlCb = indicadores(2);
+    ultlCr = indicadores(3);
+
+    bytesY  = bytesComponentes{1};
+    bytesCb = bytesComponentes{2};
+    bytesCr = bytesComponentes{3};
+
+    % Debemos haber consumido exactamente todo el archivo.
+    if ftell(fid) ~= TC
+        error('El archivo contiene datos adicionales no previstos.');
+    end
+
+    % Cerrar ahora el archivo mediante el objeto onCleanup.
+    clear cierreArchivo
+
+    % PASO 6: recuperar las secuencias binarias.
+    CodedY  = bytes2bits(bytesY, ultlY);
+    CodedCb = bytes2bits(bytesCb, ultlCb);
+    CodedCr = bytes2bits(bytesCr, ultlCr);
+
+    % PASO 8: decodificar con las tablas Huffman a medida.
+    XScanrec = DecodeScans_custom( ...
+        CodedY, CodedCb, CodedCr, [mamp namp], ...
+        BITS_Y_DC, HUFFVAL_Y_DC, BITS_Y_AC, HUFFVAL_Y_AC, ...
+        BITS_C_DC, HUFFVAL_C_DC, BITS_C_AC, HUFFVAL_C_AC);
+
+    % PASO 9: deshacer el orden zigzag.
+    Xlabrec = invscan(XScanrec);
+
+    % PASO 10: descuantizar las etiquetas.
+    Xtransrec = desquantmat(Xlabrec, caliQ);
+
+    % PASO 11: aplicar la DCT inversa.
+    Xamprec = imidct(Xtransrec, m, n);
+
+    % PASO 12: convertir a RGB, recortar y guardar.
+    Xrgb = uint8(round(ycbcr2rgb(Xamprec / 255) * 255));
+
+    % Eliminar las filas y columnas anadidas al comprimir.
+    Xrec = Xrgb(1:m, 1:n, :);
+
+    % Guardar la imagen reconstruida.
+    imwrite(Xrec, archivoSalida, 'bmp');
+
+    % PASO 13: calcular el error cuadratico medio.
+    errorImagen = double(X) - double(Xrec);
+    erroresCuadrados = errorImagen .^ 2;
+    MSE = mean(erroresCuadrados(:));
+
+    % PASO 14: calcular el porcentaje de espacio ahorrado.
+    RC = 100 * (TO - TC) / TO;
+
+
+    % PASO 15: mostrar la imagen original y la reconstruida.
+    figure;
+
+    subplot(1, 2, 1);
+    imshow(X);
+    title('Imagen original');
+
+    subplot(1, 2, 2);
+    imshow(Xrec);
+    title('Imagen descomprimida custom');
+    
+end
+\end{lstlisting}
+
+\chapter{Código completo de la auxiliar de decodificación}\label{src:DecodeScans_custom.m}
+
+Archivo: \texttt{DecodeScans\_custom.m}. Las líneas corresponden a la copia consultada.
+
+\begin{lstlisting}
+function XScanrec = DecodeScans_custom( ...
+    CodedY, CodedCb, CodedCr, tam, ...
+    BITS_Y_DC, HUFFVAL_Y_DC, BITS_Y_AC, HUFFVAL_Y_AC, ...
+    BITS_C_DC, HUFFVAL_C_DC, BITS_C_AC, HUFFVAL_C_AC)
+
+    % Reconstruir la tabla de decodificacion DC de luminancia.
+    [~, HUFFCODE] = HCodeTables(BITS_Y_DC, HUFFVAL_Y_DC);
+    [mincode_Y_DC, maxcode_Y_DC, valptr_Y_DC] = ...
+        HDecodingTables(BITS_Y_DC, HUFFCODE);
+
+    % Reconstruir la tabla de decodificacion AC de luminancia.
+    [~, HUFFCODE] = HCodeTables(BITS_Y_AC, HUFFVAL_Y_AC);
+    [mincode_Y_AC, maxcode_Y_AC, valptr_Y_AC] = ...
+        HDecodingTables(BITS_Y_AC, HUFFCODE);
+
+    % Reconstruir la tabla de decodificacion DC de crominancia.
+    [~, HUFFCODE] = HCodeTables(BITS_C_DC, HUFFVAL_C_DC);
+    [mincode_C_DC, maxcode_C_DC, valptr_C_DC] = ...
+        HDecodingTables(BITS_C_DC, HUFFCODE);
+
+    % Reconstruir la tabla de decodificacion AC de crominancia.
+    [~, HUFFCODE] = HCodeTables(BITS_C_AC, HUFFVAL_C_AC);
+    [mincode_C_AC, maxcode_C_AC, valptr_C_AC] = ...
+        HDecodingTables(BITS_C_AC, HUFFCODE);
+
+    % Decodificar luminancia.
+    YScanrec = DecodeSingleScan( ...
+        CodedY, ...
+        mincode_Y_DC, maxcode_Y_DC, valptr_Y_DC, HUFFVAL_Y_DC, ...
+        mincode_Y_AC, maxcode_Y_AC, valptr_Y_AC, HUFFVAL_Y_AC, ...
+        tam);
+
+    % Decodificar crominancia Cb.
+    CbScanrec = DecodeSingleScan( ...
+        CodedCb, ...
+        mincode_C_DC, maxcode_C_DC, valptr_C_DC, HUFFVAL_C_DC, ...
+        mincode_C_AC, maxcode_C_AC, valptr_C_AC, HUFFVAL_C_AC, ...
+        tam);
+
+    % Decodificar crominancia Cr.
+    CrScanrec = DecodeSingleScan( ...
+        CodedCr, ...
+        mincode_C_DC, maxcode_C_DC, valptr_C_DC, HUFFVAL_C_DC, ...
+        mincode_C_AC, maxcode_C_AC, valptr_C_AC, HUFFVAL_C_AC, ...
+        tam);
+
+    % Reunir las tres componentes.
+    XScanrec = cat(3, YScanrec, CbScanrec, CrScanrec);
+
+end
+\end{lstlisting}
+
+\end{document}

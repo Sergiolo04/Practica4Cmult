@@ -1126,3 +1126,68 @@ Las diferencias introducidas por la cuantización pueden
 ser esperables. La codificación y decodificación Huffman,
 si funcionan correctamente, deben conservar exactamente
 las etiquetas cuantizadas.
+
+## Paso 16. Probar la compresión y descompresión completas
+
+Comprimo Img00.bmp con caliQ = 100 y guardo el porcentaje
+de ahorro devuelto en RCcomp.
+
+Después ejecuto jdes_custom sobre comprimido.huc.
+Cuando solicita la imagen original, indico Img00.bmp,
+la misma utilizada al comprimir.
+
+El descompresor debe generar comprimido_des_cus.bmp,
+devolver MSE y RC, y mostrar la imagen original junto
+a la reconstruida.
+
+### Comprobaciones
+
+Comparo RCcomp con RCdes. Ambos deben coincidir porque
+utilizan los mismos tamaños del original y del comprimido.
+
+Compruebo que el MSE sea finito y no negativo. No exijo
+que sea cero, ya que la cuantización introduce pérdida.
+
+También observo las imágenes para detectar posibles
+problemas de reconstrucción, como colores anómalos
+o bloques desplazados.
+
+### Resultados
+
+- Imagen: Img00.bmp.
+- caliQ: 100.
+- RC del compresor: pendiente.
+- RC del descompresor: pendiente.
+- MSE: pendiente.
+- Archivo reconstruido generado: pendiente.
+- Observaciones visuales: pendiente.
+- Errores durante la ejecución: pendiente.
+
+### Alcance de la prueba
+
+Esta prueba comprueba el funcionamiento conjunto de las
+dos funciones. La coincidencia de RC y una imagen reconocible
+no demuestran por sí solas que Huffman se haya invertido
+exactamente.
+
+Para verificar esa parte, se podrán comparar las etiquetas
+cuantizadas antes de codificar y después de decodificar:
+deben coincidir sin diferencias.
+
+## Resultado de la prueba completa
+
+Pruebo la compresión y descompresión de Img00.bmp con caliQ = 100.
+
+La ejecución termina sin errores y muestra ambas imágenes.
+
+- RC del compresor: 97,80 %.
+- RC del descompresor: 97,80 %.
+- MSE: 34,546211.
+
+Los porcentajes de ahorro coinciden. Visualmente, la imagen
+reconstruida conserva el contenido y presenta pérdida de detalle.
+
+La prueba confirma el funcionamiento conjunto para esta imagen.
+Queda pendiente comparar las etiquetas cuantizadas antes de
+codificar y después de decodificar para verificar que Huffman
+las conserva exactamente.
